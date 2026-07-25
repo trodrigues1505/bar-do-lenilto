@@ -25,7 +25,8 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          - name: Instalar dependências
+
+      - name: Instalar dependências
         run: npm install
 
       - name: Build (site estático)
@@ -52,4 +53,4 @@ jobs:
     steps:
       - name: Publicar
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v4  
