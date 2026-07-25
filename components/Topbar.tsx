@@ -21,6 +21,7 @@ export default function Topbar() {
   const tabs = [
     { href: '/mesas/', label: 'Mesas', show: true },
     { href: '/produtos/', label: 'Produtos', show: isStaff },
+    { href: '/usuarios/', label: 'Usuários', show: isAdmin },
   ]
 
   return (

@@ -5,7 +5,14 @@ import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/app/providers'
 
 type Product = { id: string; name: string; price: number; category: string }
-type Item = { id: string; product_id: string; product_name: string; unit_price: number; qty: number }
+type Item = {
+  id: string
+  product_id: string
+  product_name: string
+  unit_price: number
+  qty: number
+  paid_qty: number
+}
 type TableRow = { id: string; number: number; status: 'livre' | 'ocupada' }
 
 const fmt = (n: number) => 'R$ ' + n.toFixed(2).replace('.', ',')
@@ -21,15 +28,19 @@ export default function OrderPanel({
   onClose: () => void
   onChanged: () => void
 }) {
-  const { isStaff } = useAuth()
+  const { isStaff, user } = useAuth()
   const supabase = createClient()
   const [orderId, setOrderId] = useState<string | null>(null)
   const [items, setItems] = useState<Item[]>([])
   const [selectedProduct, setSelectedProduct] = useState(products[0]?.id || '')
   const [qty, setQty] = useState(1)
   const [loading, setLoading] = useState(true)
+  const [settlingItem, setSettlingItem] = useState<string | null>(null)
+  const [settleQty, setSettleQty] = useState(1)
 
   const total = items.reduce((sum, it) => sum + it.unit_price * it.qty, 0)
+  const totalPago = items.reduce((sum, it) => sum + it.unit_price * it.paid_qty, 0)
+  const totalPendente = total - totalPago
 
   const loadOrder = async () => {
     setLoading(true)
@@ -58,10 +69,9 @@ export default function OrderPanel({
 
   const ensureOrder = async () => {
     if (orderId) return orderId
-    const { data: userRes } = await supabase.auth.getUser()
     const { data: newOrder, error } = await supabase
       .from('orders')
-      .insert({ table_id: table.id, opened_by: userRes.user?.id })
+      .insert({ table_id: table.id, opened_by: user?.id })
       .select()
       .single()
     if (error || !newOrder) return null
@@ -93,12 +103,17 @@ export default function OrderPanel({
   }
 
   const changeQty = async (item: Item, delta: number) => {
-    const newQty = Math.max(1, item.qty + delta)
+    const newQty = Math.max(item.paid_qty, item.qty + delta)
+    if (newQty < 1) return
     await supabase.from('order_items').update({ qty: newQty }).eq('id', item.id)
     await loadOrder()
   }
 
   const removeItem = async (item: Item) => {
+    if (item.paid_qty > 0) {
+      alert('Esse item já tem baixa parcial paga — não dá pra remover, só ajustar a quantidade.')
+      return
+    }
     await supabase.from('order_items').delete().eq('id', item.id)
     const remaining = items.filter(it => it.id !== item.id)
     if (remaining.length === 0 && orderId) {
@@ -108,9 +123,34 @@ export default function OrderPanel({
     onChanged()
   }
 
+  const openSettle = (item: Item) => {
+    setSettlingItem(item.id)
+    setSettleQty(item.qty - item.paid_qty)
+  }
+
+  const confirmSettle = async (item: Item) => {
+    const remaining = item.qty - item.paid_qty
+    const qtyToSettle = Math.min(Math.max(1, settleQty), remaining)
+    if (qtyToSettle <= 0) return
+
+    await supabase.from('order_item_payments').insert({
+      order_item_id: item.id,
+      qty: qtyToSettle,
+      amount: qtyToSettle * item.unit_price,
+      settled_by: user?.id,
+    })
+    await supabase.from('order_items').update({ paid_qty: item.paid_qty + qtyToSettle }).eq('id', item.id)
+    setSettlingItem(null)
+    await loadOrder()
+    onChanged()
+  }
+
   const closeOrder = async () => {
     if (!orderId || items.length === 0) return
-    if (!confirm(`Fechar o pedido da Mesa ${table.number} no valor de ${fmt(total)}?`)) return
+    const msg = totalPendente > 0
+      ? `Ainda falta ${fmt(totalPendente)} pra quitar nessa mesa. Mesmo assim fechar o pedido (total: ${fmt(total)})?`
+      : `Fechar o pedido da Mesa ${table.number} no valor de ${fmt(total)}?`
+    if (!confirm(msg)) return
     await supabase.from('orders').update({
       status: 'fechado',
       closed_at: new Date().toISOString(),
@@ -159,28 +199,78 @@ export default function OrderPanel({
           ) : items.length === 0 ? (
             <div className="text-center text-muted py-8 text-sm">Nenhum item lançado ainda.</div>
           ) : (
-            items.map(item => (
-              <div key={item.id} className="flex items-center justify-between py-2.5 border-b border-line">
-                <div>
-                  <div className="font-medium">{item.product_name}</div>
-                  <div className="text-muted text-xs">{fmt(item.unit_price)} un.</div>
+            items.map(item => {
+              const remaining = item.qty - item.paid_qty
+              const isFullyPaid = remaining === 0
+              return (
+                <div key={item.id} className="py-2.5 border-b border-line">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <div className="font-medium">{item.product_name}</div>
+                      <div className="text-muted text-xs">
+                        {fmt(item.unit_price)} un.
+                        {item.paid_qty > 0 && (
+                          <span className="text-green-400"> · {item.paid_qty} pago{item.paid_qty > 1 ? 's' : ''}</span>
+                        )}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2.5">
+                      <button onClick={() => changeQty(item, -1)} className="w-6.5 h-6.5 rounded bg-bgCard border border-line hover:border-red">−</button>
+                      <span>{item.qty}</span>
+                      <button onClick={() => changeQty(item, 1)} className="w-6.5 h-6.5 rounded bg-bgCard border border-line hover:border-red">+</button>
+                      <span className="font-display min-w-[70px] text-right">{fmt(item.unit_price * item.qty)}</span>
+                      <button onClick={() => removeItem(item)} className="text-muted hover:text-red-bright bg-transparent border-none cursor-pointer">✕</button>
+                    </div>
+                  </div>
+
+                  {isStaff && !isFullyPaid && settlingItem !== item.id && (
+                    <button
+                      onClick={() => openSettle(item)}
+                      className="mt-2 text-xs border border-line rounded-full px-3 py-1 text-paperDim hover:border-red hover:text-paper"
+                    >
+                      Dar baixa ({remaining} pendente{remaining > 1 ? 's' : ''})
+                    </button>
+                  )}
+
+                  {settlingItem === item.id && (
+                    <div className="mt-2 flex items-center gap-2 bg-bgCard border border-line rounded-lg p-2.5">
+                      <span className="text-xs text-muted">Quantas unidades foram pagas agora?</span>
+                      <input
+                        type="number"
+                        min={1}
+                        max={remaining}
+                        value={settleQty}
+                        onChange={(e) => setSettleQty(Math.min(remaining, Math.max(1, parseInt(e.target.value) || 1)))}
+                        className="w-16 bg-bg border border-line rounded px-2 py-1 text-center"
+                      />
+                      <button onClick={() => confirmSettle(item)} className="bg-green-600 text-[#0c0909] font-display text-xs px-3 py-1.5 rounded">
+                        Confirmar
+                      </button>
+                      <button onClick={() => setSettlingItem(null)} className="text-muted text-xs hover:text-paper">
+                        Cancelar
+                      </button>
+                    </div>
+                  )}
                 </div>
-                <div className="flex items-center gap-2.5">
-                  <button onClick={() => changeQty(item, -1)} className="w-6.5 h-6.5 rounded bg-bgCard border border-line hover:border-red">−</button>
-                  <span>{item.qty}</span>
-                  <button onClick={() => changeQty(item, 1)} className="w-6.5 h-6.5 rounded bg-bgCard border border-line hover:border-red">+</button>
-                  <span className="font-display min-w-[70px] text-right">{fmt(item.unit_price * item.qty)}</span>
-                  <button onClick={() => removeItem(item)} className="text-muted hover:text-red-bright bg-transparent border-none cursor-pointer">✕</button>
-                </div>
-              </div>
-            ))
+              )
+            })
           )}
         </div>
 
         <div className="px-6 py-4 border-t border-line sticky bottom-0 bg-bgElevated">
+          <div className="flex justify-between items-center text-xs text-muted mb-1">
+            <span>Total do pedido</span>
+            <span>{fmt(total)}</span>
+          </div>
+          {totalPago > 0 && (
+            <div className="flex justify-between items-center text-xs text-green-400 mb-1">
+              <span>Já pago</span>
+              <span>{fmt(totalPago)}</span>
+            </div>
+          )}
           <div className="flex justify-between items-center mb-3.5">
-            <span className="text-muted text-xs tracking-wide uppercase">Total</span>
-            <span className="font-display text-3xl text-red-bright">{fmt(total)}</span>
+            <span className="text-muted text-xs tracking-wide uppercase">Falta pagar</span>
+            <span className="font-display text-3xl text-red-bright">{fmt(totalPendente)}</span>
           </div>
           {isStaff && table.status === 'ocupada' && (
             <button

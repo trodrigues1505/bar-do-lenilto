@@ -64,7 +64,19 @@ create table if not exists public.order_items (
   product_id uuid references public.products(id),
   product_name text not null,
   unit_price numeric(10,2) not null,
-  qty int not null default 1
+  qty int not null default 1,
+  paid_qty int not null default 0
+);
+
+-- BAIXAS PARCIAIS (histórico de quem pagou o quê, útil quando a mesa tem
+-- mais de um pagante e cada um quita só a própria parte)
+create table if not exists public.order_item_payments (
+  id uuid primary key default gen_random_uuid(),
+  order_item_id uuid references public.order_items(id) on delete cascade,
+  qty int not null,
+  amount numeric(10,2) not null,
+  settled_by uuid references public.profiles(id),
+  created_at timestamptz default now()
 );
 
 -- ============================================================
@@ -75,6 +87,7 @@ alter table public.products enable row level security;
 alter table public.bar_tables enable row level security;
 alter table public.orders enable row level security;
 alter table public.order_items enable row level security;
+alter table public.order_item_payments enable row level security;
 
 create or replace function public.is_staff()
 returns boolean as $$
@@ -130,6 +143,11 @@ drop policy if exists "staff_update_items" on public.order_items;
 create policy "staff_update_items" on public.order_items for update using (public.is_staff());
 drop policy if exists "staff_delete_items" on public.order_items;
 create policy "staff_delete_items" on public.order_items for delete using (public.is_staff());
+
+drop policy if exists "staff_select_payments" on public.order_item_payments;
+create policy "staff_select_payments" on public.order_item_payments for select using (public.is_staff());
+drop policy if exists "staff_insert_payments" on public.order_item_payments;
+create policy "staff_insert_payments" on public.order_item_payments for insert with check (public.is_staff());
 
 -- ============================================================
 -- DADOS INICIAIS
