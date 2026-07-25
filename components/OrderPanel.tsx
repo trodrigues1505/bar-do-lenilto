@@ -1,0 +1,198 @@
+'use client'
+
+import { useEffect, useState } from 'react'
+import { createClient } from '@/lib/supabase/client'
+import { useAuth } from '@/app/providers'
+
+type Product = { id: string; name: string; price: number; category: string }
+type Item = { id: string; product_id: string; product_name: string; unit_price: number; qty: number }
+type TableRow = { id: string; number: number; status: 'livre' | 'ocupada' }
+
+const fmt = (n: number) => 'R$ ' + n.toFixed(2).replace('.', ',')
+
+export default function OrderPanel({
+  table,
+  products,
+  onClose,
+  onChanged,
+}: {
+  table: TableRow
+  products: Product[]
+  onClose: () => void
+  onChanged: () => void
+}) {
+  const { isStaff } = useAuth()
+  const supabase = createClient()
+  const [orderId, setOrderId] = useState<string | null>(null)
+  const [items, setItems] = useState<Item[]>([])
+  const [selectedProduct, setSelectedProduct] = useState(products[0]?.id || '')
+  const [qty, setQty] = useState(1)
+  const [loading, setLoading] = useState(true)
+
+  const total = items.reduce((sum, it) => sum + it.unit_price * it.qty, 0)
+
+  const loadOrder = async () => {
+    setLoading(true)
+    const { data: order } = await supabase
+      .from('orders')
+      .select('*')
+      .eq('table_id', table.id)
+      .eq('status', 'aberto')
+      .maybeSingle()
+
+    if (order) {
+      setOrderId(order.id)
+      const { data: orderItems } = await supabase
+        .from('order_items')
+        .select('*')
+        .eq('order_id', order.id)
+      setItems(orderItems || [])
+    } else {
+      setOrderId(null)
+      setItems([])
+    }
+    setLoading(false)
+  }
+
+  useEffect(() => { loadOrder() }, [table.id])
+
+  const ensureOrder = async () => {
+    if (orderId) return orderId
+    const { data: userRes } = await supabase.auth.getUser()
+    const { data: newOrder, error } = await supabase
+      .from('orders')
+      .insert({ table_id: table.id, opened_by: userRes.user?.id })
+      .select()
+      .single()
+    if (error || !newOrder) return null
+    await supabase.from('bar_tables').update({ status: 'ocupada' }).eq('id', table.id)
+    setOrderId(newOrder.id)
+    return newOrder.id as string
+  }
+
+  const addItem = async () => {
+    const product = products.find(p => p.id === selectedProduct)
+    if (!product) return
+    const oid = await ensureOrder()
+    if (!oid) return
+
+    const existing = items.find(it => it.product_id === product.id)
+    if (existing) {
+      await supabase.from('order_items').update({ qty: existing.qty + qty }).eq('id', existing.id)
+    } else {
+      await supabase.from('order_items').insert({
+        order_id: oid,
+        product_id: product.id,
+        product_name: product.name,
+        unit_price: product.price,
+        qty,
+      })
+    }
+    await loadOrder()
+    onChanged()
+  }
+
+  const changeQty = async (item: Item, delta: number) => {
+    const newQty = Math.max(1, item.qty + delta)
+    await supabase.from('order_items').update({ qty: newQty }).eq('id', item.id)
+    await loadOrder()
+  }
+
+  const removeItem = async (item: Item) => {
+    await supabase.from('order_items').delete().eq('id', item.id)
+    const remaining = items.filter(it => it.id !== item.id)
+    if (remaining.length === 0 && orderId) {
+      await supabase.from('bar_tables').update({ status: 'livre' }).eq('id', table.id)
+    }
+    await loadOrder()
+    onChanged()
+  }
+
+  const closeOrder = async () => {
+    if (!orderId || items.length === 0) return
+    if (!confirm(`Fechar o pedido da Mesa ${table.number} no valor de ${fmt(total)}?`)) return
+    await supabase.from('orders').update({
+      status: 'fechado',
+      closed_at: new Date().toISOString(),
+      total,
+    }).eq('id', orderId)
+    await supabase.from('bar_tables').update({ status: 'livre' }).eq('id', table.id)
+    onChanged()
+    onClose()
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-5" onClick={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="bg-bgElevated border border-line rounded-2xl w-full max-w-xl max-h-[88vh] overflow-y-auto shadow-2xl">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-line sticky top-0 bg-bgElevated z-10">
+          <h2 className="text-2xl m-0">Mesa {table.number}</h2>
+          <button onClick={onClose} className="text-muted hover:text-red-bright text-2xl bg-transparent border-none cursor-pointer">✕</button>
+        </div>
+
+        <div className="px-6 py-4">
+          {isStaff && (
+            <div className="flex gap-2 mb-4">
+              <select
+                value={selectedProduct}
+                onChange={(e) => setSelectedProduct(e.target.value)}
+                className="flex-1 bg-bg border border-line rounded-lg px-3 py-2.5"
+              >
+                {products.map(p => (
+                  <option key={p.id} value={p.id}>{p.name} — {fmt(p.price)}</option>
+                ))}
+              </select>
+              <input
+                type="number"
+                min={1}
+                value={qty}
+                onChange={(e) => setQty(Math.max(1, parseInt(e.target.value) || 1))}
+                className="w-16 bg-bg border border-line rounded-lg text-center"
+              />
+              <button onClick={addItem} className="bg-red hover:bg-red-bright text-paper font-display tracking-wide rounded-lg px-4">
+                Adicionar
+              </button>
+            </div>
+          )}
+
+          {loading ? (
+            <div className="text-center text-muted py-8 text-sm">Carregando...</div>
+          ) : items.length === 0 ? (
+            <div className="text-center text-muted py-8 text-sm">Nenhum item lançado ainda.</div>
+          ) : (
+            items.map(item => (
+              <div key={item.id} className="flex items-center justify-between py-2.5 border-b border-line">
+                <div>
+                  <div className="font-medium">{item.product_name}</div>
+                  <div className="text-muted text-xs">{fmt(item.unit_price)} un.</div>
+                </div>
+                <div className="flex items-center gap-2.5">
+                  <button onClick={() => changeQty(item, -1)} className="w-6.5 h-6.5 rounded bg-bgCard border border-line hover:border-red">−</button>
+                  <span>{item.qty}</span>
+                  <button onClick={() => changeQty(item, 1)} className="w-6.5 h-6.5 rounded bg-bgCard border border-line hover:border-red">+</button>
+                  <span className="font-display min-w-[70px] text-right">{fmt(item.unit_price * item.qty)}</span>
+                  <button onClick={() => removeItem(item)} className="text-muted hover:text-red-bright bg-transparent border-none cursor-pointer">✕</button>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+
+        <div className="px-6 py-4 border-t border-line sticky bottom-0 bg-bgElevated">
+          <div className="flex justify-between items-center mb-3.5">
+            <span className="text-muted text-xs tracking-wide uppercase">Total</span>
+            <span className="font-display text-3xl text-red-bright">{fmt(total)}</span>
+          </div>
+          {isStaff && table.status === 'ocupada' && (
+            <button
+              onClick={closeOrder}
+              disabled={items.length === 0}
+              className="w-full bg-green-500 disabled:opacity-30 text-[#0c0909] font-display tracking-wide uppercase py-3 rounded-lg"
+            >
+              Fechar Pedido
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
