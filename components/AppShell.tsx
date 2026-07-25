@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import SplashScreen from './SplashScreen'
+import RegisterSW from './RegisterSW'
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const [showSplash, setShowSplash] = useState(false)
@@ -21,6 +22,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <>
+      <RegisterSW />
       {showSplash && <SplashScreen onDone={() => setShowSplash(false)} />}
       {children}
     </>

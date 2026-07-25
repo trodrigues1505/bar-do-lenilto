@@ -1,0 +1,16 @@
+{
+  "name": "Bar do Lenilto — Gestão de Mesas",
+  "short_name": "Bar do Lenilto",
+  "description": "Gestão de mesas e pedidos do Bar do Lenilto",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#0c0909",
+  "theme_color": "#c81d25",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512-maskable.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

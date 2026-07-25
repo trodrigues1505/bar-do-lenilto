@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/app/providers'
 import Topbar from '@/components/Topbar'
@@ -10,8 +11,13 @@ type TableRow = { id: string; number: number; status: 'livre' | 'ocupada' }
 type Product = { id: string; name: string; price: number; category: string }
 
 export default function MesasPage() {
-  const { isStaff, loading: authLoading } = useAuth()
+  const { user, isStaff, loading: authLoading } = useAuth()
+  const router = useRouter()
   const supabase = createClient()
+
+  useEffect(() => {
+    if (!authLoading && !user) router.replace('/login/')
+  }, [authLoading, user, router])
   const [tables, setTables] = useState<TableRow[]>([])
   const [products, setProducts] = useState<Product[]>([])
   const [totals, setTotals] = useState<Record<string, number>>({})
@@ -48,6 +54,8 @@ export default function MesasPage() {
     await supabase.from('bar_tables').insert({ number: maxNum + 1 })
     await load()
   }
+
+  if (authLoading || !user) return null
 
   return (
     <div className="max-w-6xl mx-auto px-5 pt-5 pb-20">

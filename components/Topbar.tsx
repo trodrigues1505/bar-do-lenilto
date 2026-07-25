@@ -4,21 +4,23 @@ import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/app/providers'
+import { withBasePath } from '@/lib/basePath'
 
 export default function Topbar() {
   const { profile, isStaff, isAdmin } = useAuth()
-  const pathname = usePathname()
+  const rawPathname = usePathname()
+  const pathname = rawPathname?.endsWith('/') ? rawPathname : `${rawPathname}/`
   const router = useRouter()
   const supabase = createClient()
 
   const handleLogout = async () => {
     await supabase.auth.signOut()
-    router.push('/login')
+    router.push('/login/')
   }
 
   const tabs = [
-    { href: '/mesas', label: 'Mesas', show: true },
-    { href: '/produtos', label: 'Produtos', show: isStaff },
+    { href: '/mesas/', label: 'Mesas', show: true },
+    { href: '/produtos/', label: 'Produtos', show: isStaff },
   ]
 
   return (
@@ -26,7 +28,7 @@ export default function Topbar() {
       <div className="flex items-center justify-between pb-5 mb-6 border-b-[3px] border-red">
         <div className="flex items-center gap-3">
           <img
-            src="/logo.jpg"
+            src={withBasePath('/logo.jpg')}
             alt="Bar do Lenilto"
             className="w-11 h-11 rounded-full object-cover shadow-xl"
             style={{ boxShadow: '0 0 14px rgba(200,29,37,.4)' }}

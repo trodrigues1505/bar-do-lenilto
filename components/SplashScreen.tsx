@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { withBasePath } from '@/lib/basePath'
 
 export default function SplashScreen({ onDone }: { onDone: () => void }) {
   const [closing, setClosing] = useState(false)
@@ -14,7 +15,7 @@ export default function SplashScreen({ onDone }: { onDone: () => void }) {
   return (
     <div className={`splash ${closing ? 'splash-out' : ''}`}>
       <div className="splash-glow" />
-      <img src="/logo.jpg" alt="Bar do Lenilto" className="splash-logo" />
+      <img src={withBasePath('/logo.jpg')} alt="Bar do Lenilto" className="splash-logo" />
       <div className="splash-title">Bar do Lenilto</div>
       <div className="splash-sub">Gestão de Mesas</div>
     </div>

@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/app/providers'
 import Topbar from '@/components/Topbar'
@@ -9,8 +10,13 @@ type Product = { id: string; name: string; price: number; category: string }
 const fmt = (n: number) => 'R$ ' + n.toFixed(2).replace('.', ',')
 
 export default function ProdutosPage() {
-  const { isAdmin } = useAuth()
+  const { user, isAdmin, loading: authLoading } = useAuth()
+  const router = useRouter()
   const supabase = createClient()
+
+  useEffect(() => {
+    if (!authLoading && !user) router.replace('/login/')
+  }, [authLoading, user, router])
   const [products, setProducts] = useState<Product[]>([])
   const [name, setName] = useState('')
   const [price, setPrice] = useState('')
@@ -34,6 +40,8 @@ export default function ProdutosPage() {
     await supabase.from('products').delete().eq('id', id)
     await load()
   }
+
+  if (authLoading || !user) return null
 
   return (
     <div className="max-w-6xl mx-auto px-5 pt-5 pb-20">

@@ -1,15 +1,18 @@
 'use client'
 
 import { createClient } from '@/lib/supabase/client'
+import { withBasePath } from '@/lib/basePath'
 
 export default function LoginPage() {
   const supabase = createClient()
 
   const handleGoogleLogin = async () => {
+    // Sem servidor (GitHub Pages): o Supabase lê o token direto na URL quando
+    // o Google redireciona de volta para o app (detectSessionInUrl: true no client).
     await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: {
-        redirectTo: `${window.location.origin}/auth/callback`,
+        redirectTo: `${window.location.origin}${withBasePath('/mesas/')}`,
       },
     })
   }
@@ -19,7 +22,7 @@ export default function LoginPage() {
       <div className="bg-bgElevated border border-line rounded-2xl p-10 w-full max-w-sm text-center shadow-2xl relative overflow-hidden">
         <div className="absolute top-0 left-0 right-0 h-1.5 bg-[repeating-linear-gradient(90deg,#c81d25_0_18px,#6e0f14_18px_36px)]" />
         <img
-          src="/logo.jpg"
+          src={withBasePath('/logo.jpg')}
           alt="Bar do Lenilto"
           className="w-[90px] h-[90px] mx-auto mt-2 mb-5 rounded-full object-cover shadow-xl"
           style={{ boxShadow: '0 0 24px rgba(200,29,37,.45)' }}

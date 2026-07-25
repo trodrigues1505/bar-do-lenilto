@@ -1,107 +1,117 @@
 # 🤘 Bar do Lenilto — Gestão de Mesas
 
-App para gerenciar pedidos por mesa, com login Google real, banco de produtos e perfis
-de Admin / Funcionário / Cliente. Feito com Next.js + Supabase.
+App para gerenciar pedidos por mesa, com login Google real, banco de produtos, perfis
+(admin / funcionário / cliente) e instalável como app (Android, iOS, PC).
 
-## 1. Criar o projeto no Supabase
+Publicado como site 100% estático no **GitHub Pages**, com **Supabase** cuidando do
+banco de dados e do login.
 
-1. Acesse https://supabase.com e crie uma conta / novo projeto (grátis).
-2. No painel do projeto, vá em **SQL Editor > New query**.
-3. Copie todo o conteúdo do arquivo `supabase/schema.sql` deste repositório, cole e clique em **Run**.
-   Isso cria as tabelas, as regras de segurança (RLS) e já cadastra as 10 mesas e os produtos iniciais.
-4. Vá em **Project Settings > API** e copie:
-   - `Project URL`
-   - `anon public key`
+## 1. Banco de dados no Supabase
 
-## 2. Ativar login com Google
+1. Crie uma conta/projeto em https://supabase.com (grátis).
+2. No painel: **SQL Editor > New query**.
+3. Copie todo o conteúdo de `supabase/schema.sql` deste projeto, cole e clique **Run**.
+   Isso cria as tabelas, as regras de segurança (RLS) e já cadastra as 10 mesas e os
+   produtos de exemplo.
+4. Em **Project Settings > API**, copie o `Project URL` e a `anon public key` — vai
+   precisar deles no passo 3.
+
+## 2. Login com Google
 
 1. No Supabase: **Authentication > Providers > Google** → habilite.
-2. Você vai precisar de um **Client ID** e **Client Secret** do Google. Para gerar:
-   - Acesse https://console.cloud.google.com/apis/credentials
-   - Crie um projeto (se não tiver um) → **Create Credentials > OAuth client ID**
-   - Tipo de aplicativo: **Web application**
-   - Em **Authorized redirect URIs**, adicione a URL que o Supabase mostra na tela do
-     provider Google (algo como `https://SEU-PROJETO.supabase.co/auth/v1/callback`)
-   - Copie o Client ID e o Client Secret gerados e cole nos campos do Supabase.
-3. Em **Authentication > URL Configuration**, defina:
-   - **Site URL**: a URL onde o app vai ficar publicado (ex: `https://bardolenilto.vercel.app`)
-   - **Redirect URLs**: adicione também `http://localhost:3000/auth/callback` (para testar local)
-     e `https://SEU-DOMINIO/auth/callback` (produção)
+2. No Google Cloud Console (https://console.cloud.google.com/apis/credentials):
+   - **Create Credentials > OAuth client ID** → tipo **Web application**
+   - Em **Authorized redirect URIs**, cole a URL que a tela do Google no Supabase mostra
+     (algo como `https://SEU-PROJETO.supabase.co/auth/v1/callback`)
+   - Copie o **Client ID** e o **Client Secret** e cole nos campos do Supabase.
+3. Em **Authentication > URL Configuration** no Supabase, configure:
+   - **Site URL**: `https://SEU-USUARIO.github.io/NOME-DO-REPO/`
+   - **Redirect URLs**: adicione `https://SEU-USUARIO.github.io/NOME-DO-REPO/**`
+     (o `**` no final cobre `/mesas/`, `/login/` etc.)
 
-## 3. Configurar o projeto localmente
+   Troque `SEU-USUARIO` e `NOME-DO-REPO` pelos valores reais do seu repositório.
 
-```bash
-npm install
-cp .env.local.example .env.local
-```
+## 3. Publicar no GitHub Pages
 
-Edite `.env.local` e cole a URL e a chave anon copiadas no passo 1:
+O projeto já vem com um robô (`.github/workflows/deploy.yml`) que builda e publica
+sozinho toda vez que você sobe arquivos na branch `main`.
 
-```
-NEXT_PUBLIC_SUPABASE_URL=https://SEU-PROJETO.supabase.co
-NEXT_PUBLIC_SUPABASE_ANON_KEY=sua-chave-anon-publica
-```
+1. Suba os arquivos deste projeto pro seu repositório no GitHub (upload pela web
+   funciona normalmente).
+2. No repositório: **Settings > Secrets and variables > Actions > New repository secret**,
+   crie duas secrets:
+   - `NEXT_PUBLIC_SUPABASE_URL` → a Project URL do passo 1
+   - `NEXT_PUBLIC_SUPABASE_ANON_KEY` → a anon key do passo 1
+3. Em **Settings > Pages**, em **Build and deployment > Source**, selecione
+   **GitHub Actions**.
+4. Pronto — a cada upload/commit na `main`, o site é rebuildado e publicado
+   automaticamente em `https://SEU-USUARIO.github.io/NOME-DO-REPO/`.
+   Acompanhe o progresso na aba **Actions** do repositório.
 
-Rodar localmente:
-
-```bash
-npm run dev
-```
-
-Abra `http://localhost:3000` — vai te redirecionar para o login com Google.
+> ⚠️ Se o seu repositório se chamar exatamente `SEU-USUARIO.github.io` (página de
+> usuário, publicada na raiz do domínio, sem subpasta), edite
+> `.github/workflows/deploy.yml` e apague a linha
+> `NEXT_PUBLIC_BASE_PATH: /${{ github.event.repository.name }}` — nesse caso não
+> existe subpasta.
 
 ## 4. Virar admin
 
-Todo mundo que faz login pela primeira vez entra como **Cliente**. Para você virar admin,
-no Supabase vá em **SQL Editor** e rode (trocando pelo seu e-mail do Google):
+Todo login novo entra como **Cliente**. Pra você virar admin, no Supabase
+(**SQL Editor**), rode trocando pelo seu e-mail do Google:
 
 ```sql
 update public.profiles set role = 'admin' where email = 'seuemail@gmail.com';
 ```
 
-Depois disso, faça logout e login de novo no app — o perfil admin libera as abas de
-Produtos e (em breve) Estoque/Relatórios, além do cadastro de mesas.
-
-Para dar acesso de **Funcionário** a alguém (ex: seu pai, seu irmão), mesma lógica:
+Para dar acesso de **Funcionário** a alguém (pai, irmão etc.):
 
 ```sql
-update public.profiles set role = 'funcionario' where email = 'email-do-funcionario@gmail.com';
+update public.profiles set role = 'funcionario' where email = 'email-da-pessoa@gmail.com';
 ```
 
-## 5. Publicar no GitHub + Vercel
+Depois de rodar o comando, a pessoa precisa sair e entrar de novo no app pra o novo
+perfil valer.
 
-```bash
-git init
-git add .
-git commit -m "Bar do Lenilto - versão inicial"
-git branch -M main
-git remote add origin https://github.com/SEU-USUARIO/bar-do-lenilto.git
-git push -u origin main
-```
+## 5. Instalar como app (PWA)
 
-Depois:
+O app já tem manifest, ícones e service worker configurados — dá pra instalar como
+se fosse um app nativo:
 
-1. Acesse https://vercel.com, importe o repositório do GitHub.
-2. Em **Environment Variables**, adicione as mesmas duas variáveis do `.env.local`.
-3. Deploy. A Vercel te dá uma URL pública (ex: `bar-do-lenilto.vercel.app`).
-4. Volte no Supabase (**Authentication > URL Configuration**) e atualize a **Site URL** e
-   **Redirect URLs** para essa URL de produção, e no Google Cloud Console adicione essa
-   URL também nas origens autorizadas, se pedir.
+- **Android (Chrome)**: abre o site, toca nos três pontinhos → **Instalar app** (ou
+  aparece um banner automático perguntando).
+- **iPhone/iPad (Safari)**: abre o site, toca no ícone de compartilhar (□↑) →
+  **Adicionar à Tela de Início**.
+- **PC (Chrome/Edge)**: abre o site, clica no ícone de instalação que aparece na
+  barra de endereço (ou menu → **Instalar Bar do Lenilto**).
 
 ## O que já funciona
 
-- Login real com Google (Supabase Auth)
-- Perfis: admin / funcionário / cliente (cliente ainda sem função própria)
+- Login real com Google (Supabase Auth), 100% client-side (compatível com GitHub Pages)
+- Perfis: admin / funcionário / cliente
 - 10 mesas cadastradas, com botão para adicionar mais
 - Pedido por mesa: lançar produtos, ajustar quantidade, remover item, total em tempo real
-- Fechar pedido (zera a mesa, fica no histórico da tabela `orders` como "fechado")
+- Fechar pedido (fica registrado como "fechado" na tabela `orders`)
 - Cadastro de produtos (nome, preço, categoria) — gerenciado pelo admin
-- Regras de segurança (RLS) no banco: cliente não consegue mexer em pedidos/produtos
-  mesmo tentando pela API diretamente
+- Splash screen animada com o logo ao abrir o app
+- Instalável no Android, iOS e PC (PWA)
+- Regras de segurança no banco (RLS): cliente não mexe em pedidos/produtos mesmo
+  tentando pela API diretamente
 
 ## Próximos passos sugeridos
 
-- Controle de estoque inteligente (baixa automática de insumos por produto vendido, alertas de reposição)
+- Controle de estoque inteligente (baixa automática de insumos por produto vendido,
+  alertas de reposição)
 - Relatórios (faturamento por dia/mesa/produto)
 - Histórico de pedidos fechados por mesa
-- Tela própria para o perfil Cliente (ex: ver cardápio, chamar garçom)
+- Tela própria para o perfil Cliente
+
+## Rodar localmente (opcional, pra testar antes de subir)
+
+```bash
+npm install
+cp .env.local.example .env.local
+# edite o .env.local com sua URL e chave do Supabase
+npm run dev
+```
+
+Abre `http://localhost:3000`.
