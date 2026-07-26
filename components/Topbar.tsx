@@ -26,6 +26,7 @@ export default function Topbar() {
     { href: '/mesas/', label: 'Mesas', show: true },
     { href: '/produtos/', label: 'Produtos', show: isStaff },
     { href: '/clientes/', label: isStaff ? 'Clientes' : 'Top Clientes', show: true },
+    { href: '/trofeus/', label: isAdmin ? 'Troféus' : 'Meus Troféus', show: isAdmin || !isStaff },
     { href: '/estoque/', label: 'Estoque', show: isStaff },
     { href: '/usuarios/', label: 'Usuários', show: isAdmin },
   ]

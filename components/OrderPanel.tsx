@@ -13,6 +13,7 @@ type Item = {
   unit_price: number
   qty: number
   paid_qty: number
+  customer_id: string | null
 }
 type TableRow = { id: string; number: number; status: 'livre' | 'ocupada' }
 type Customer = { id: string; full_name: string | null; email: string | null }
@@ -39,6 +40,7 @@ export default function OrderPanel({
   const [checkins, setCheckins] = useState<Customer[]>([])
   const [selectedProduct, setSelectedProduct] = useState(products[0]?.id || '')
   const [qty, setQty] = useState(1)
+  const [itemFor, setItemFor] = useState('')
   const [loading, setLoading] = useState(true)
   const [settlingItem, setSettlingItem] = useState<string | null>(null)
   const [settleQty, setSettleQty] = useState(1)
@@ -139,12 +141,14 @@ export default function OrderPanel({
     const oid = await ensureOrder()
     if (!oid) return
 
-    const existing = items.find(it => it.product_id === product.id)
+    const forCustomer = itemFor || null
+    const existing = items.find(it => it.product_id === product.id && it.customer_id === forCustomer)
     if (existing) {
       await supabase.from('order_items').update({ qty: existing.qty + qty }).eq('id', existing.id)
     } else {
       await supabase.from('order_items').insert({
         order_id: oid, product_id: product.id, product_name: product.name, unit_price: product.price, qty,
+        customer_id: forCustomer,
       })
     }
     await adjustStockForProduct(product.id, qty)
@@ -313,14 +317,21 @@ export default function OrderPanel({
           )}
 
           {isStaff && (
-            <div className="flex gap-2 mb-4">
+            <div className="flex gap-2 mb-4 flex-wrap">
               <select value={selectedProduct} onChange={(e) => setSelectedProduct(e.target.value)}
-                className="flex-1 bg-bg border border-line rounded-lg px-3 py-2.5">
+                className="flex-1 min-w-[160px] bg-bg border border-line rounded-lg px-3 py-2.5">
                 {products.map(p => <option key={p.id} value={p.id}>{p.name} — {fmt(p.price)}</option>)}
               </select>
               <input type="number" min={1} value={qty}
                 onChange={(e) => setQty(Math.max(1, parseInt(e.target.value) || 1))}
                 className="w-16 bg-bg border border-line rounded-lg text-center" />
+              {checkins.length > 0 && (
+                <select value={itemFor} onChange={(e) => setItemFor(e.target.value)}
+                  className="bg-bg border border-line rounded-lg px-2 py-2.5 text-sm">
+                  <option value="">Compartilhado</option>
+                  {checkins.map(c => <option key={c.id} value={c.id}>{c.full_name || c.email}</option>)}
+                </select>
+              )}
               <button onClick={addItem} className="bg-red hover:bg-red-bright text-paper font-display tracking-wide rounded-lg px-4">
                 Adicionar
               </button>
@@ -343,6 +354,7 @@ export default function OrderPanel({
                       <div className="text-muted text-xs">
                         {fmt(item.unit_price)} un.
                         {item.paid_qty > 0 && <span className="text-green-400"> · {item.paid_qty} pago{item.paid_qty > 1 ? 's' : ''}</span>}
+                        {item.customer_id && <span> · 👤 {nameOf(item.customer_id)}</span>}
                       </div>
                     </div>
                     <div className="flex items-center gap-2.5">
