@@ -16,6 +16,7 @@ type Item = {
 }
 type TableRow = { id: string; number: number; status: 'livre' | 'ocupada' }
 type Customer = { id: string; full_name: string | null; email: string | null }
+type Payment = { id: string; amount: number; payer_customer_id: string | null; method: string | null; created_at: string }
 
 const fmt = (n: number) => 'R$ ' + n.toFixed(2).replace('.', ',')
 
@@ -34,20 +35,30 @@ export default function OrderPanel({
   const supabase = createClient()
   const [orderId, setOrderId] = useState<string | null>(null)
   const [items, setItems] = useState<Item[]>([])
+  const [payments, setPayments] = useState<Payment[]>([])
+  const [checkins, setCheckins] = useState<Customer[]>([])
   const [selectedProduct, setSelectedProduct] = useState(products[0]?.id || '')
   const [qty, setQty] = useState(1)
   const [loading, setLoading] = useState(true)
   const [settlingItem, setSettlingItem] = useState<string | null>(null)
   const [settleQty, setSettleQty] = useState(1)
 
-  const [customerId, setCustomerId] = useState<string | null>(null)
-  const [customers, setCustomers] = useState<Customer[]>([])
+  const [allCustomers, setAllCustomers] = useState<Customer[]>([])
   const [customerSearch, setCustomerSearch] = useState('')
   const [showCustomerPicker, setShowCustomerPicker] = useState(false)
 
-  const total = items.reduce((sum, it) => sum + it.unit_price * it.qty, 0)
-  const totalPago = items.reduce((sum, it) => sum + it.unit_price * it.paid_qty, 0)
-  const totalPendente = total - totalPago
+  const [showPaymentForm, setShowPaymentForm] = useState(false)
+  const [paymentAmount, setPaymentAmount] = useState('')
+  const [paymentPayer, setPaymentPayer] = useState('')
+  const [paymentMethod, setPaymentMethod] = useState('dinheiro')
+
+  const itemsTotal = items.reduce((sum, it) => sum + it.unit_price * it.qty, 0)
+  const itemsPaid = items.reduce((sum, it) => sum + it.unit_price * it.paid_qty, 0)
+  const paymentsTotal = payments.reduce((sum, p) => sum + p.amount, 0)
+  const total = itemsTotal
+  const totalPago = itemsPaid + paymentsTotal
+  const totalPendente = Math.max(0, total - totalPago)
+  const quitado = items.length > 0 && totalPendente <= 0.005
 
   const loadOrder = async () => {
     setLoading(true)
@@ -60,17 +71,24 @@ export default function OrderPanel({
 
     if (order) {
       setOrderId(order.id)
-      setCustomerId(order.customer_id || null)
-      const { data: orderItems } = await supabase
-        .from('order_items')
-        .select('*')
-        .eq('order_id', order.id)
+      const [{ data: orderItems }, { data: orderPayments }] = await Promise.all([
+        supabase.from('order_items').select('*').eq('order_id', order.id),
+        supabase.from('order_payments').select('*').eq('order_id', order.id).order('created_at'),
+      ])
       setItems(orderItems || [])
+      setPayments(orderPayments || [])
     } else {
       setOrderId(null)
-      setCustomerId(null)
       setItems([])
+      setPayments([])
     }
+
+    const { data: checkinRows } = await supabase
+      .from('table_checkins')
+      .select('customer_id, profiles(id, full_name, email)')
+      .eq('table_id', table.id)
+    setCheckins((checkinRows || []).map((r: any) => r.profiles).filter(Boolean))
+
     setLoading(false)
   }
 
@@ -79,7 +97,7 @@ export default function OrderPanel({
   useEffect(() => {
     if (!isStaff) return
     supabase.from('profiles').select('id, full_name, email').eq('role', 'cliente').order('full_name')
-      .then(({ data }) => setCustomers(data || []))
+      .then(({ data }) => setAllCustomers(data || []))
   }, [isStaff])
 
   const ensureOrder = async () => {
@@ -95,12 +113,24 @@ export default function OrderPanel({
     return newOrder.id as string
   }
 
-  const attachCustomer = async (id: string | null) => {
-    const oid = await ensureOrder()
-    if (!oid) return
-    await supabase.from('orders').update({ customer_id: id }).eq('id', oid)
-    setCustomerId(id)
+  const addCheckin = async (customer: Customer) => {
+    const { data: elsewhere } = await supabase.rpc('customer_active_tables', { p_customer_id: customer.id })
+    const other = (elsewhere || []).find((t: any) => t.table_id !== table.id)
+    if (other) {
+      const ok = confirm(`${customer.full_name || customer.email} já está na Mesa ${other.table_number}. Adicionar aqui também (sem tirar de lá)?`)
+      if (!ok) return
+    }
+    await supabase.from('table_checkins').insert({
+      table_id: table.id, customer_id: customer.id, checked_in_by: user?.id,
+    })
     setShowCustomerPicker(false)
+    setCustomerSearch('')
+    await loadOrder()
+  }
+
+  const removeCheckin = async (customerId: string) => {
+    await supabase.from('table_checkins').delete().eq('table_id', table.id).eq('customer_id', customerId)
+    await loadOrder()
   }
 
   const addItem = async () => {
@@ -114,11 +144,7 @@ export default function OrderPanel({
       await supabase.from('order_items').update({ qty: existing.qty + qty }).eq('id', existing.id)
     } else {
       await supabase.from('order_items').insert({
-        order_id: oid,
-        product_id: product.id,
-        product_name: product.name,
-        unit_price: product.price,
-        qty,
+        order_id: oid, product_id: product.id, product_name: product.name, unit_price: product.price, qty,
       })
     }
     await adjustStockForProduct(product.id, qty)
@@ -158,17 +184,47 @@ export default function OrderPanel({
     const remaining = item.qty - item.paid_qty
     const qtyToSettle = Math.min(Math.max(1, settleQty), remaining)
     if (qtyToSettle <= 0) return
-
     await supabase.from('order_item_payments').insert({
-      order_item_id: item.id,
-      qty: qtyToSettle,
-      amount: qtyToSettle * item.unit_price,
-      settled_by: user?.id,
+      order_item_id: item.id, qty: qtyToSettle, amount: qtyToSettle * item.unit_price, settled_by: user?.id,
     })
     await supabase.from('order_items').update({ paid_qty: item.paid_qty + qtyToSettle }).eq('id', item.id)
     setSettlingItem(null)
     await loadOrder()
     onChanged()
+  }
+
+  const submitPayment = async () => {
+    if (!orderId) return
+    const amount = parseFloat(paymentAmount.replace(',', '.'))
+    if (isNaN(amount) || amount <= 0) return
+
+    await supabase.from('order_payments').insert({
+      order_id: orderId,
+      amount,
+      payer_customer_id: paymentPayer || null,
+      method: paymentMethod,
+      created_by: user?.id,
+    })
+
+    if (paymentPayer) {
+      const { data: settings } = await supabase.from('app_settings').select('points_per_real').eq('id', 1).single()
+      const ratio = settings?.points_per_real ?? 1
+      const points = Math.round(amount * ratio)
+      if (points > 0) {
+        await supabase.from('loyalty_transactions').insert({
+          customer_id: paymentPayer,
+          points,
+          reason: `Pagamento na Mesa ${table.number}`,
+          order_id: orderId,
+          created_by: user?.id,
+        })
+      }
+    }
+
+    setPaymentAmount('')
+    setPaymentPayer('')
+    setShowPaymentForm(false)
+    await loadOrder()
   }
 
   const closeOrder = async () => {
@@ -178,27 +234,9 @@ export default function OrderPanel({
       : `Fechar o pedido da Mesa ${table.number} no valor de ${fmt(total)}?`
     if (!confirm(msg)) return
 
-    await supabase.from('orders').update({
-      status: 'fechado',
-      closed_at: new Date().toISOString(),
-      total,
-    }).eq('id', orderId)
+    await supabase.from('orders').update({ status: 'fechado', closed_at: new Date().toISOString(), total }).eq('id', orderId)
     await supabase.from('bar_tables').update({ status: 'livre' }).eq('id', table.id)
-
-    if (customerId) {
-      const { data: settings } = await supabase.from('app_settings').select('points_per_real').eq('id', 1).single()
-      const ratio = settings?.points_per_real ?? 1
-      const points = Math.round(total * ratio)
-      if (points > 0) {
-        await supabase.from('loyalty_transactions').insert({
-          customer_id: customerId,
-          points,
-          reason: `Compra na Mesa ${table.number}`,
-          order_id: orderId,
-          created_by: user?.id,
-        })
-      }
-    }
+    await supabase.from('table_checkins').delete().eq('table_id', table.id)
 
     onChanged()
     onClose()
@@ -210,27 +248,21 @@ export default function OrderPanel({
       : `Excluir a Mesa ${table.number}? Isso apaga o histórico de pedidos dessa mesa também.`
     if (!confirm(warn)) return
 
-    const { error, count } = await supabase
-      .from('bar_tables')
-      .delete({ count: 'exact' })
-      .eq('id', table.id)
-
-    if (error) {
-      alert('Erro ao excluir mesa: ' + error.message)
-      return
-    }
-    if (!count) {
-      alert('Não foi possível excluir — confira se a permissão "admin_delete_tables" foi criada no Supabase (SQL Editor).')
-      return
-    }
+    const { error, count } = await supabase.from('bar_tables').delete({ count: 'exact' }).eq('id', table.id)
+    if (error) { alert('Erro ao excluir mesa: ' + error.message); return }
+    if (!count) { alert('Não foi possível excluir — confira se a permissão "admin_delete_tables" foi criada no Supabase.'); return }
     onChanged()
     onClose()
   }
 
-  const selectedCustomer = customers.find(c => c.id === customerId)
-  const filteredCustomers = customers.filter(c =>
+  const filteredCustomers = allCustomers.filter(c =>
+    !checkins.some(k => k.id === c.id) &&
     (c.full_name || c.email || '').toLowerCase().includes(customerSearch.toLowerCase())
   )
+  const nameOf = (id: string | null) => {
+    if (!id) return null
+    return allCustomers.find(c => c.id === id)?.full_name || allCustomers.find(c => c.id === id)?.email || checkins.find(c => c.id === id)?.full_name
+  }
 
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-5" onClick={(e) => e.target === e.currentTarget && onClose()}>
@@ -243,23 +275,23 @@ export default function OrderPanel({
         <div className="px-6 py-4">
           {isStaff && (
             <div className="mb-4">
-              {selectedCustomer ? (
-                <div className="flex items-center justify-between bg-bgCard border border-line rounded-lg px-3 py-2 text-sm">
-                  <span>👤 {selectedCustomer.full_name || selectedCustomer.email}</span>
-                  <button onClick={() => attachCustomer(null)} className="text-muted hover:text-red-bright text-xs bg-transparent border-none cursor-pointer">
-                    remover
-                  </button>
-                </div>
-              ) : (
+              <div className="text-[11px] tracking-wide uppercase text-muted mb-1.5">Clientes na mesa</div>
+              <div className="flex flex-wrap gap-1.5 mb-1.5">
+                {checkins.map(c => (
+                  <span key={c.id} className="flex items-center gap-1.5 bg-bgCard border border-line rounded-full pl-3 pr-1.5 py-1 text-xs">
+                    👤 {c.full_name || c.email}
+                    <button onClick={() => removeCheckin(c.id)} className="text-muted hover:text-red-bright bg-transparent border-none cursor-pointer">✕</button>
+                  </span>
+                ))}
                 <button
                   onClick={() => setShowCustomerPicker(v => !v)}
-                  className="text-xs border border-dashed border-line rounded-lg px-3 py-2 text-muted hover:border-red hover:text-paper w-full text-left"
+                  className="text-xs border border-dashed border-line rounded-full px-3 py-1 text-muted hover:border-red hover:text-paper"
                 >
-                  + Vincular cliente cadastrado (pra pontuar)
+                  + adicionar cliente
                 </button>
-              )}
-              {showCustomerPicker && !selectedCustomer && (
-                <div className="mt-2 bg-bgCard border border-line rounded-lg p-2.5">
+              </div>
+              {showCustomerPicker && (
+                <div className="mt-1 bg-bgCard border border-line rounded-lg p-2.5">
                   <input
                     value={customerSearch}
                     onChange={(e) => setCustomerSearch(e.target.value)}
@@ -267,15 +299,10 @@ export default function OrderPanel({
                     className="w-full bg-bg border border-line rounded px-2.5 py-1.5 mb-2 text-sm"
                   />
                   <div className="max-h-40 overflow-y-auto">
-                    {filteredCustomers.length === 0 && (
-                      <div className="text-xs text-muted py-2">Nenhum cliente encontrado.</div>
-                    )}
+                    {filteredCustomers.length === 0 && <div className="text-xs text-muted py-2">Nenhum cliente encontrado.</div>}
                     {filteredCustomers.map(c => (
-                      <button
-                        key={c.id}
-                        onClick={() => attachCustomer(c.id)}
-                        className="block w-full text-left text-sm py-1.5 px-1 hover:text-red-bright bg-transparent border-none cursor-pointer"
-                      >
+                      <button key={c.id} onClick={() => addCheckin(c)}
+                        className="block w-full text-left text-sm py-1.5 px-1 hover:text-red-bright bg-transparent border-none cursor-pointer">
                         {c.full_name || c.email}
                       </button>
                     ))}
@@ -287,22 +314,13 @@ export default function OrderPanel({
 
           {isStaff && (
             <div className="flex gap-2 mb-4">
-              <select
-                value={selectedProduct}
-                onChange={(e) => setSelectedProduct(e.target.value)}
-                className="flex-1 bg-bg border border-line rounded-lg px-3 py-2.5"
-              >
-                {products.map(p => (
-                  <option key={p.id} value={p.id}>{p.name} — {fmt(p.price)}</option>
-                ))}
+              <select value={selectedProduct} onChange={(e) => setSelectedProduct(e.target.value)}
+                className="flex-1 bg-bg border border-line rounded-lg px-3 py-2.5">
+                {products.map(p => <option key={p.id} value={p.id}>{p.name} — {fmt(p.price)}</option>)}
               </select>
-              <input
-                type="number"
-                min={1}
-                value={qty}
+              <input type="number" min={1} value={qty}
                 onChange={(e) => setQty(Math.max(1, parseInt(e.target.value) || 1))}
-                className="w-16 bg-bg border border-line rounded-lg text-center"
-              />
+                className="w-16 bg-bg border border-line rounded-lg text-center" />
               <button onClick={addItem} className="bg-red hover:bg-red-bright text-paper font-display tracking-wide rounded-lg px-4">
                 Adicionar
               </button>
@@ -324,9 +342,7 @@ export default function OrderPanel({
                       <div className="font-medium">{item.product_name}</div>
                       <div className="text-muted text-xs">
                         {fmt(item.unit_price)} un.
-                        {item.paid_qty > 0 && (
-                          <span className="text-green-400"> · {item.paid_qty} pago{item.paid_qty > 1 ? 's' : ''}</span>
-                        )}
+                        {item.paid_qty > 0 && <span className="text-green-400"> · {item.paid_qty} pago{item.paid_qty > 1 ? 's' : ''}</span>}
                       </div>
                     </div>
                     <div className="flex items-center gap-2.5">
@@ -337,42 +353,77 @@ export default function OrderPanel({
                       <button onClick={() => removeItem(item)} className="text-muted hover:text-red-bright bg-transparent border-none cursor-pointer">✕</button>
                     </div>
                   </div>
-
                   {isStaff && !isFullyPaid && settlingItem !== item.id && (
-                    <button
-                      onClick={() => openSettle(item)}
-                      className="mt-2 text-xs border border-line rounded-full px-3 py-1 text-paperDim hover:border-red hover:text-paper"
-                    >
+                    <button onClick={() => openSettle(item)}
+                      className="mt-2 text-xs border border-line rounded-full px-3 py-1 text-paperDim hover:border-red hover:text-paper">
                       Dar baixa ({remaining} pendente{remaining > 1 ? 's' : ''})
                     </button>
                   )}
-
                   {settlingItem === item.id && (
                     <div className="mt-2 flex items-center gap-2 bg-bgCard border border-line rounded-lg p-2.5">
                       <span className="text-xs text-muted">Quantas unidades foram pagas agora?</span>
-                      <input
-                        type="number"
-                        min={1}
-                        max={remaining}
-                        value={settleQty}
+                      <input type="number" min={1} max={remaining} value={settleQty}
                         onChange={(e) => setSettleQty(Math.min(remaining, Math.max(1, parseInt(e.target.value) || 1)))}
-                        className="w-16 bg-bg border border-line rounded px-2 py-1 text-center"
-                      />
-                      <button onClick={() => confirmSettle(item)} className="bg-green-600 text-[#0c0909] font-display text-xs px-3 py-1.5 rounded">
-                        Confirmar
-                      </button>
-                      <button onClick={() => setSettlingItem(null)} className="text-muted text-xs hover:text-paper">
-                        Cancelar
-                      </button>
+                        className="w-16 bg-bg border border-line rounded px-2 py-1 text-center" />
+                      <button onClick={() => confirmSettle(item)} className="bg-green-600 text-[#0c0909] font-display text-xs px-3 py-1.5 rounded">Confirmar</button>
+                      <button onClick={() => setSettlingItem(null)} className="text-muted text-xs hover:text-paper">Cancelar</button>
                     </div>
                   )}
                 </div>
               )
             })
           )}
+
+          {isStaff && orderId && (
+            <div className="mt-4">
+              <div className="flex items-center justify-between mb-2">
+                <div className="text-[11px] tracking-wide uppercase text-muted">Pagamentos registrados</div>
+                <button onClick={() => setShowPaymentForm(v => !v)}
+                  className="text-xs border border-line rounded-full px-3 py-1 text-paperDim hover:border-red hover:text-paper">
+                  + Registrar pagamento
+                </button>
+              </div>
+              {payments.map(p => (
+                <div key={p.id} className="flex items-center justify-between text-sm py-1.5 border-b border-line">
+                  <span className="text-paperDim">
+                    {p.method || 'pagamento'} {nameOf(p.payer_customer_id) ? `· ${nameOf(p.payer_customer_id)}` : ''}
+                  </span>
+                  <span className="font-display text-green-400">{fmt(p.amount)}</span>
+                </div>
+              ))}
+              {showPaymentForm && (
+                <div className="mt-2 bg-bgCard border border-line rounded-lg p-2.5 flex flex-wrap gap-2 items-center">
+                  <input
+                    value={paymentAmount} onChange={(e) => setPaymentAmount(e.target.value)}
+                    type="text" inputMode="decimal" placeholder="Valor (ex: 50)"
+                    className="w-28 bg-bg border border-line rounded px-2 py-1.5 text-sm"
+                  />
+                  <select value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)}
+                    className="bg-bg border border-line rounded px-2 py-1.5 text-sm">
+                    <option value="dinheiro">Dinheiro</option>
+                    <option value="pix">Pix</option>
+                    <option value="cartao">Cartão</option>
+                  </select>
+                  <select value={paymentPayer} onChange={(e) => setPaymentPayer(e.target.value)}
+                    className="bg-bg border border-line rounded px-2 py-1.5 text-sm flex-1 min-w-[140px]">
+                    <option value="">Pagador (opcional, pra pontuar)</option>
+                    {checkins.map(c => <option key={c.id} value={c.id}>{c.full_name || c.email}</option>)}
+                  </select>
+                  <button onClick={submitPayment} className="bg-green-600 text-[#0c0909] font-display text-xs px-3 py-1.5 rounded">
+                    Registrar
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         <div className="px-6 py-4 border-t border-line sticky bottom-0 bg-bgElevated">
+          {quitado && (
+            <div className="bg-green-600/15 border border-green-600 text-green-400 text-xs rounded-lg px-3 py-2 mb-3 text-center font-display tracking-wide uppercase">
+              ✅ Saldo quitado — pode fechar a mesa!
+            </div>
+          )}
           <div className="flex justify-between items-center text-xs text-muted mb-1">
             <span>Total do pedido</span>
             <span>{fmt(total)}</span>
@@ -388,19 +439,14 @@ export default function OrderPanel({
             <span className="font-display text-3xl text-red-bright">{fmt(totalPendente)}</span>
           </div>
           {isStaff && table.status === 'ocupada' && (
-            <button
-              onClick={closeOrder}
-              disabled={items.length === 0}
-              className="w-full bg-green-500 disabled:opacity-30 text-[#0c0909] font-display tracking-wide uppercase py-3 rounded-lg"
-            >
+            <button onClick={closeOrder} disabled={items.length === 0}
+              className={`w-full disabled:opacity-30 text-[#0c0909] font-display tracking-wide uppercase py-3 rounded-lg ${quitado ? 'bg-green-400' : 'bg-green-500'}`}>
               Fechar Pedido
             </button>
           )}
           {isAdmin && (
-            <button
-              onClick={deleteTable}
-              className="w-full mt-2.5 text-xs text-muted hover:text-red-bright border border-line hover:border-red-dark rounded-lg py-2 bg-transparent"
-            >
+            <button onClick={deleteTable}
+              className="w-full mt-2.5 text-xs text-muted hover:text-red-bright border border-line hover:border-red-dark rounded-lg py-2 bg-transparent">
               Excluir mesa
             </button>
           )}

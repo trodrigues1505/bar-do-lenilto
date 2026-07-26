@@ -10,6 +10,7 @@ import FloorMap from '@/components/FloorMap'
 
 type TableRow = { id: string; number: number; status: 'livre' | 'ocupada'; pos_x: number | null; pos_y: number | null }
 type Product = { id: string; name: string; price: number; category: string }
+type MyTable = { table_id: string; table_number: number; total: number; pending: number }
 
 export default function MesasPage() {
   const { user, isStaff, loading: authLoading } = useAuth()
@@ -20,6 +21,7 @@ export default function MesasPage() {
   const [totals, setTotals] = useState<Record<string, number>>({})
   const [openTable, setOpenTable] = useState<TableRow | null>(null)
   const [view, setView] = useState<'mapa' | 'grade'>('mapa')
+  const [myTables, setMyTables] = useState<MyTable[]>([])
 
   useEffect(() => {
     if (!authLoading && !user) router.replace('/login/')
@@ -44,6 +46,9 @@ export default function MesasPage() {
         )
       })
       setTotals(t)
+    } else {
+      const { data: mine } = await supabase.rpc('get_my_tables')
+      setMyTables(mine || [])
     }
   }
 
@@ -80,6 +85,41 @@ export default function MesasPage() {
     <div className="max-w-6xl mx-auto px-5 pt-5 pb-20">
       <Topbar />
 
+      {!isStaff ? (
+        <>
+          <h2 className="text-xl mb-1">Minhas Mesas</h2>
+          <p className="text-muted text-sm mb-5">
+            Aqui aparecem as mesas em que um atendente te vinculou.
+          </p>
+          {myTables.length === 0 ? (
+            <div className="text-center text-muted py-10 text-sm">
+              Você ainda não está em nenhuma mesa. Peça pro atendente te vincular quando chegar.
+            </div>
+          ) : (
+            <div className="grid gap-3.5" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))' }}>
+              {myTables.map(t => (
+                <div key={t.table_id} className="bg-bgCard border border-red-dark rounded-xl p-5">
+                  <div className="font-display text-3xl leading-none mb-2">Mesa {t.table_number}</div>
+                  <div className="flex justify-between text-sm text-muted mb-1">
+                    <span>Total</span>
+                    <span>R$ {t.total.toFixed(2).replace('.', ',')}</span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-xs tracking-wide uppercase text-muted">Falta pagar</span>
+                    <span className="font-display text-xl text-red-bright">R$ {t.pending.toFixed(2).replace('.', ',')}</span>
+                  </div>
+                  {t.pending <= 0.005 && (
+                    <div className="mt-3 text-center text-xs font-display uppercase tracking-wide text-green-400">
+                      ✅ Quitado
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      ) : (
+        <>
       <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
         <h2 className="text-xl m-0">Mesas ({tables.length})</h2>
         <div className="flex gap-1.5 bg-bgElevated border border-line rounded-lg p-1">
@@ -162,6 +202,8 @@ export default function MesasPage() {
           onClose={() => setOpenTable(null)}
           onChanged={load}
         />
+      )}
+      </>
       )}
     </div>
   )
