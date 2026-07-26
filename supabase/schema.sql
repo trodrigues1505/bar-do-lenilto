@@ -43,6 +43,8 @@ create table if not exists public.bar_tables (
   id uuid primary key default gen_random_uuid(),
   number int not null unique,
   status text not null default 'livre' check (status in ('livre','ocupada')),
+  pos_x numeric,
+  pos_y numeric,
   created_at timestamptz default now()
 );
 
@@ -152,8 +154,9 @@ create policy "staff_insert_payments" on public.order_item_payments for insert w
 -- ============================================================
 -- DADOS INICIAIS
 -- ============================================================
-insert into public.bar_tables (number)
-select generate_series(1,10)
+insert into public.bar_tables (number, pos_x, pos_y)
+select n, 20 + ((n - 1) % 4) * 20, 45 + ((n - 1) / 4) * 22
+from generate_series(1,10) as n
 where not exists (select 1 from public.bar_tables);
 
 insert into public.products (name, price, category)

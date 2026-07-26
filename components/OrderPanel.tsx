@@ -163,7 +163,7 @@ export default function OrderPanel({
 
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-5" onClick={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="bg-bgElevated border border-line rounded-2xl w-full max-w-xl max-h-[88vh] overflow-y-auto shadow-2xl">
+      <div className="panel-enter bg-bgElevated border border-line rounded-2xl w-full max-w-xl max-h-[88vh] overflow-y-auto shadow-2xl">
         <div className="flex items-center justify-between px-6 py-4 border-b border-line sticky top-0 bg-bgElevated z-10">
           <h2 className="text-2xl m-0">Mesa {table.number}</h2>
           <button onClick={onClose} className="text-muted hover:text-red-bright text-2xl bg-transparent border-none cursor-pointer">✕</button>

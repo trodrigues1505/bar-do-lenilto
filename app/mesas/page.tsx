@@ -6,22 +6,24 @@ import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/app/providers'
 import Topbar from '@/components/Topbar'
 import OrderPanel from '@/components/OrderPanel'
+import FloorMap from '@/components/FloorMap'
 
-type TableRow = { id: string; number: number; status: 'livre' | 'ocupada' }
+type TableRow = { id: string; number: number; status: 'livre' | 'ocupada'; pos_x: number | null; pos_y: number | null }
 type Product = { id: string; name: string; price: number; category: string }
 
 export default function MesasPage() {
   const { user, isStaff, loading: authLoading } = useAuth()
   const router = useRouter()
   const supabase = createClient()
-
-  useEffect(() => {
-    if (!authLoading && !user) router.replace('/login/')
-  }, [authLoading, user, router])
   const [tables, setTables] = useState<TableRow[]>([])
   const [products, setProducts] = useState<Product[]>([])
   const [totals, setTotals] = useState<Record<string, number>>({})
   const [openTable, setOpenTable] = useState<TableRow | null>(null)
+  const [view, setView] = useState<'mapa' | 'grade'>('mapa')
+
+  useEffect(() => {
+    if (!authLoading && !user) router.replace('/login/')
+  }, [authLoading, user, router])
 
   const load = async () => {
     const { data: tableRows } = await supabase.from('bar_tables').select('*').order('number')
@@ -51,8 +53,13 @@ export default function MesasPage() {
 
   const addTable = async () => {
     const maxNum = tables.reduce((m, t) => Math.max(m, t.number), 0)
-    await supabase.from('bar_tables').insert({ number: maxNum + 1 })
+    await supabase.from('bar_tables').insert({ number: maxNum + 1, pos_x: 50, pos_y: 50 })
     await load()
+  }
+
+  const updateTablePosition = async (tableId: string, x: number, y: number) => {
+    setTables(prev => prev.map(t => t.id === tableId ? { ...t, pos_x: x, pos_y: y } : t))
+    await supabase.from('bar_tables').update({ pos_x: x, pos_y: y }).eq('id', tableId)
   }
 
   if (authLoading || !user) return null
@@ -61,41 +68,80 @@ export default function MesasPage() {
     <div className="max-w-6xl mx-auto px-5 pt-5 pb-20">
       <Topbar />
 
-      <div className="flex items-center justify-between mb-4">
+      <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
         <h2 className="text-xl m-0">Mesas ({tables.length})</h2>
+        <div className="flex gap-1.5 bg-bgElevated border border-line rounded-lg p-1">
+          <button
+            onClick={() => setView('mapa')}
+            className={`px-3.5 py-1.5 rounded-md text-xs font-display tracking-wide uppercase transition ${view === 'mapa' ? 'bg-red text-paper' : 'text-paperDim hover:text-paper'}`}
+          >
+            Mapa
+          </button>
+          <button
+            onClick={() => setView('grade')}
+            className={`px-3.5 py-1.5 rounded-md text-xs font-display tracking-wide uppercase transition ${view === 'grade' ? 'bg-red text-paper' : 'text-paperDim hover:text-paper'}`}
+          >
+            Grade
+          </button>
+        </div>
       </div>
 
-      <div className="grid gap-3.5" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))' }}>
-        {tables.map(t => (
-          <div
-            key={t.id}
-            onClick={() => setOpenTable(t)}
-            className={`bg-bgCard border rounded-xl p-4 cursor-pointer min-h-[120px] flex flex-col justify-between hover:-translate-y-0.5 hover:shadow-xl transition ${
-              t.status === 'ocupada' ? 'border-red-dark bg-gradient-to-br from-red/10 to-bgCard' : 'border-line hover:border-red'
-            }`}
-          >
-            <div>
-              <div className="font-display text-3xl leading-none">Mesa {t.number}</div>
-              <div className={`text-[10px] tracking-wide uppercase font-bold mt-1.5 ${t.status === 'livre' ? 'text-green-400' : 'text-red-bright'}`}>
-                ● {t.status === 'livre' ? 'Livre' : 'Ocupada'}
+      {view === 'mapa' ? (
+        <>
+          <FloorMap
+            tables={tables}
+            totals={totals}
+            canDrag={isStaff}
+            onOpenTable={setOpenTable}
+            onPositionChange={updateTablePosition}
+          />
+          {isStaff && (
+            <p className="text-muted text-xs mt-3">
+              Segura e arrasta uma mesa pra reposicionar ela no croqui. Um toque rápido abre o pedido.
+            </p>
+          )}
+          {isStaff && (
+            <button
+              onClick={addTable}
+              className="mt-4 bg-bgElevated border border-dashed border-line rounded-lg px-4 py-2 text-sm text-muted hover:border-red hover:text-red"
+            >
+              + Adicionar mesa
+            </button>
+          )}
+        </>
+      ) : (
+        <div className="grid gap-3.5" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))' }}>
+          {tables.map(t => (
+            <div
+              key={t.id}
+              onClick={() => setOpenTable(t)}
+              className={`bg-bgCard border rounded-xl p-4 cursor-pointer min-h-[120px] flex flex-col justify-between hover:-translate-y-0.5 hover:shadow-xl transition ${
+                t.status === 'ocupada' ? 'border-red-dark bg-gradient-to-br from-red/10 to-bgCard' : 'border-line hover:border-red'
+              }`}
+            >
+              <div>
+                <div className="font-display text-3xl leading-none">Mesa {t.number}</div>
+                <div className={`text-[10px] tracking-wide uppercase font-bold mt-1.5 ${t.status === 'livre' ? 'text-green-400' : 'text-red-bright'}`}>
+                  ● {t.status === 'livre' ? 'Livre' : 'Ocupada'}
+                </div>
               </div>
+              {t.status === 'ocupada' && (
+                <div className="font-display text-base mt-2.5">
+                  R$ {(totals[t.id] || 0).toFixed(2).replace('.', ',')}
+                </div>
+              )}
             </div>
-            {t.status === 'ocupada' && (
-              <div className="font-display text-base mt-2.5">
-                R$ {(totals[t.id] || 0).toFixed(2).replace('.', ',')}
-              </div>
-            )}
-          </div>
-        ))}
-        {isStaff && (
-          <div
-            onClick={addTable}
-            className="bg-bgElevated border border-dashed border-line rounded-xl min-h-[120px] flex items-center justify-center cursor-pointer text-muted text-3xl hover:border-red hover:text-red"
-          >
-            +
-          </div>
-        )}
-      </div>
+          ))}
+          {isStaff && (
+            <div
+              onClick={addTable}
+              className="bg-bgElevated border border-dashed border-line rounded-xl min-h-[120px] flex items-center justify-center cursor-pointer text-muted text-3xl hover:border-red hover:text-red"
+            >
+              +
+            </div>
+          )}
+        </div>
+      )}
 
       {openTable && (
         <OrderPanel
