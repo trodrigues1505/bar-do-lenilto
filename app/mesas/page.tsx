@@ -10,7 +10,7 @@ import FloorMap from '@/components/FloorMap'
 
 type TableRow = { id: string; number: number; status: 'livre' | 'ocupada'; pos_x: number | null; pos_y: number | null }
 type Product = { id: string; name: string; price: number; category: string }
-type MyTable = { table_id: string; table_number: number; total: number; pending: number }
+type MyTable = { table_id: string; table_number: number; total: number; pending: number; items_summary: string | null }
 
 export default function MesasPage() {
   const { user, isStaff, loading: authLoading } = useAuth()
@@ -59,8 +59,6 @@ export default function MesasPage() {
   const addTable = async () => {
     const maxNum = tables.reduce((m, t) => Math.max(m, t.number), 0)
     const count = tables.length
-    // Posiciona mesas novas numa fileira visível perto da base do salão,
-    // escalonadas pra não nascerem empilhadas uma em cima da outra.
     const posX = Math.min(90, Math.max(10, 14 + (count % 5) * 17))
     const posY = Math.min(92, Math.max(10, 80 + Math.floor(count / 5) * 10))
     await supabase.from('bar_tables').insert({ number: maxNum + 1, pos_x: posX, pos_y: posY })
@@ -96,23 +94,14 @@ export default function MesasPage() {
               Você ainda não está em nenhuma mesa. Peça pro atendente te vincular quando chegar.
             </div>
           ) : (
-            <div className="grid gap-3.5" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))' }}>
+            <div className="grid gap-3.5" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))' }}>
               {myTables.map(t => (
-                <div key={t.table_id} className="bg-bgCard border border-red-dark rounded-xl p-5">
-                  <div className="font-display text-3xl leading-none mb-2">Mesa {t.table_number}</div>
-                  <div className="flex justify-between text-sm text-muted mb-1">
-                    <span>Total</span>
-                    <span>R$ {t.total.toFixed(2).replace('.', ',')}</span>
-                  </div>
-                  <div className="flex justify-between items-center">
-                    <span className="text-xs tracking-wide uppercase text-muted">Falta pagar</span>
-                    <span className="font-display text-xl text-red-bright">R$ {t.pending.toFixed(2).replace('.', ',')}</span>
-                  </div>
-                  {t.pending <= 0.005 && (
-                    <div className="mt-3 text-center text-xs font-display uppercase tracking-wide text-green-400">
-                      ✅ Quitado
-                    </div>
-                  )}
+                <div key={t.table_id} className="card card-hover p-5">
+                  <div className="font-display text-3xl leading-none mb-3">Mesa {t.table_number}</div>
+                  <div className="text-[11px] tracking-wide uppercase text-muted mb-1.5">Seus pedidos</div>
+                  <p className="text-sm text-paperDim">
+                    {t.items_summary || 'Nada lançado ainda.'}
+                  </p>
                 </div>
               ))}
             </div>
@@ -207,4 +196,4 @@ export default function MesasPage() {
       )}
     </div>
   )
-}
+}   
