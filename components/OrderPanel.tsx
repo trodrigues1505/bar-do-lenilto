@@ -28,7 +28,7 @@ export default function OrderPanel({
   onClose: () => void
   onChanged: () => void
 }) {
-  const { isStaff, user } = useAuth()
+  const { isStaff, isAdmin, user } = useAuth()
   const supabase = createClient()
   const [orderId, setOrderId] = useState<string | null>(null)
   const [items, setItems] = useState<Item[]>([])
@@ -161,6 +161,16 @@ export default function OrderPanel({
     onClose()
   }
 
+  const deleteTable = async () => {
+    const warn = items.length > 0
+      ? `A Mesa ${table.number} tem um pedido em aberto. Excluir mesmo assim? Isso apaga a mesa e todo o histórico dela.`
+      : `Excluir a Mesa ${table.number}? Isso apaga o histórico de pedidos dessa mesa também.`
+    if (!confirm(warn)) return
+    await supabase.from('bar_tables').delete().eq('id', table.id)
+    onChanged()
+    onClose()
+  }
+
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-5" onClick={(e) => e.target === e.currentTarget && onClose()}>
       <div className="panel-enter bg-bgElevated border border-line rounded-2xl w-full max-w-xl max-h-[88vh] overflow-y-auto shadow-2xl">
@@ -279,6 +289,14 @@ export default function OrderPanel({
               className="w-full bg-green-500 disabled:opacity-30 text-[#0c0909] font-display tracking-wide uppercase py-3 rounded-lg"
             >
               Fechar Pedido
+            </button>
+          )}
+          {isAdmin && (
+            <button
+              onClick={deleteTable}
+              className="w-full mt-2.5 text-xs text-muted hover:text-red-bright border border-line hover:border-red-dark rounded-lg py-2 bg-transparent"
+            >
+              Excluir mesa
             </button>
           )}
         </div>

@@ -70,15 +70,17 @@ export default function FloorMap({
   return (
     <div
       ref={containerRef}
-      className="relative w-full rounded-2xl overflow-hidden border border-line select-none"
+      className="relative w-full border border-line rounded-2xl select-none"
       style={{ aspectRatio: '1919 / 820', touchAction: canDrag ? 'none' : 'auto' }}
     >
-      <img
-        src={withBasePath('/tables/croqui.png')}
-        alt="Croqui do salão"
-        className="absolute inset-0 w-full h-full object-cover pointer-events-none"
-        draggable={false}
-      />
+      <div className="absolute inset-0 rounded-2xl overflow-hidden pointer-events-none">
+        <img
+          src={withBasePath('/tables/croqui.png')}
+          alt="Croqui do salão"
+          className="w-full h-full object-cover"
+          draggable={false}
+        />
+      </div>
 
       {tables.map((table, i) => {
         const pos = livePos[table.id] || { x: table.pos_x ?? 15, y: table.pos_y ?? 50 }

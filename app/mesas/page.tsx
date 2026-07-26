@@ -53,7 +53,12 @@ export default function MesasPage() {
 
   const addTable = async () => {
     const maxNum = tables.reduce((m, t) => Math.max(m, t.number), 0)
-    await supabase.from('bar_tables').insert({ number: maxNum + 1, pos_x: 50, pos_y: 50 })
+    const count = tables.length
+    // Posiciona mesas novas numa fileira visível perto da base do salão,
+    // escalonadas pra não nascerem empilhadas uma em cima da outra.
+    const posX = Math.min(90, Math.max(10, 14 + (count % 5) * 17))
+    const posY = Math.min(92, Math.max(10, 80 + Math.floor(count / 5) * 10))
+    await supabase.from('bar_tables').insert({ number: maxNum + 1, pos_x: posX, pos_y: posY })
     await load()
   }
 

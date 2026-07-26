@@ -128,6 +128,8 @@ drop policy if exists "staff_insert_tables" on public.bar_tables;
 create policy "staff_insert_tables" on public.bar_tables for insert with check (public.is_staff());
 drop policy if exists "staff_update_tables" on public.bar_tables;
 create policy "staff_update_tables" on public.bar_tables for update using (public.is_staff());
+drop policy if exists "admin_delete_tables" on public.bar_tables;
+create policy "admin_delete_tables" on public.bar_tables for delete using (public.is_admin());
 
 -- orders / order_items: só staff
 drop policy if exists "staff_select_orders" on public.orders;
