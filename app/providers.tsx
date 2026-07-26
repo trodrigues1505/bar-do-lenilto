@@ -38,23 +38,57 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const supabase = createClient()
 
   useEffect(() => {
-    const load = async () => {
-      const { data: { user } } = await supabase.auth.getUser()
-      setUser(user)
-      if (user) {
-        const { data } = await supabase
-          .from('profiles')
-          .select('*')
-          .eq('id', user.id)
-          .single()
-        setProfile(data as Profile)
-      }
-      setLoading(false)
-    }
-    load()
+    let mounted = true
 
-    const { data: listener } = supabase.auth.onAuthStateChange(() => load())
-    return () => listener.subscription.unsubscribe()
+    const loadProfile = async (userId: string) => {
+      try {
+        const { data } = await supabase.from('profiles').select('*').eq('id', userId).single()
+        if (mounted) setProfile(data as Profile)
+      } catch (err) {
+        console.error('Erro ao carregar perfil:', err)
+      }
+    }
+
+    const init = async () => {
+      try {
+        // getSession lê a sessão salva localmente (rápido, sem depender de rede).
+        // Se algo corrompido tiver ficado salvo, isso não deve travar o app.
+        const { data: { session }, error } = await supabase.auth.getSession()
+        if (error) {
+          console.error('Erro ao ler sessão:', error)
+          // Sessão inválida/corrompida — limpa e segue como deslogado.
+          await supabase.auth.signOut().catch(() => {})
+        }
+        if (!mounted) return
+        setUser(session?.user ?? null)
+        if (session?.user) await loadProfile(session.user.id)
+      } catch (err) {
+        console.error('Falha inesperada ao iniciar sessão:', err)
+      } finally {
+        // Isso SEMPRE roda, então a tela nunca fica travada em "carregando".
+        if (mounted) setLoading(false)
+      }
+    }
+    init()
+
+    // Trava de segurança: se por algum motivo nada resolver em 8s, libera a tela assim mesmo.
+    const safety = setTimeout(() => { if (mounted) setLoading(false) }, 8000)
+
+    const { data: listener } = supabase.auth.onAuthStateChange(async (_event, session) => {
+      if (!mounted) return
+      setUser(session?.user ?? null)
+      if (session?.user) {
+        await loadProfile(session.user.id)
+      } else {
+        setProfile(null)
+      }
+    })
+
+    return () => {
+      mounted = false
+      clearTimeout(safety)
+      listener.subscription.unsubscribe()
+    }
   }, [])
 
   const isStaff = profile?.role === 'admin' || profile?.role === 'funcionario'

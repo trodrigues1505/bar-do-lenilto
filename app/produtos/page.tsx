@@ -67,7 +67,14 @@ export default function ProdutosPage() {
     await load()
   }
 
-  if (authLoading || !user) return null
+  if (authLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center text-muted text-sm">
+        Carregando...
+      </div>
+    )
+  }
+  if (!user) return null
 
   return (
     <div className="max-w-6xl mx-auto px-5 pt-5 pb-20">
