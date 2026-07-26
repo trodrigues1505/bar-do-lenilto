@@ -28,6 +28,7 @@ export default function Topbar() {
     { href: '/clientes/', label: isStaff ? 'Clientes' : 'Top Clientes', show: true },
     { href: '/trofeus/', label: isAdmin ? 'Troféus' : 'Meus Troféus', show: isAdmin || !isStaff },
     { href: '/estoque/', label: 'Estoque', show: isStaff },
+    { href: '/dashboard/', label: 'Dashboard', show: isAdmin },
     { href: '/usuarios/', label: 'Usuários', show: isAdmin },
   ]
 
@@ -50,7 +51,7 @@ export default function Topbar() {
           {(canInstall || showIOSHint) && (
             <button
               onClick={() => (canInstall ? promptInstall() : setShowIOSModal(true))}
-              className="flex items-center gap-1.5 bg-red hover:bg-red-bright text-paper text-xs font-display tracking-wide uppercase px-3 py-2 rounded-full shadow-lg"
+              className="btn btn-solid btn-pill btn-sm"
             >
               📲 Instalar app
             </button>
@@ -60,7 +61,7 @@ export default function Topbar() {
             <span className="bg-red text-paper text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wide">
               {profile?.role}
             </span>
-            <button onClick={handleLogout} className="border border-line rounded-md px-2.5 py-1 text-xs text-paperDim hover:border-red hover:text-paper">
+            <button onClick={handleLogout} className="btn btn-outline btn-sm">
               Sair
             </button>
           </div>
@@ -89,15 +90,16 @@ export default function Topbar() {
       )}
 
       <div className="flex gap-2 mb-6 flex-wrap">
-        {tabs.filter(t => t.show).map(t => (
+        {tabs.filter(t => t.show).map((t, i) => (
           <Link
             key={t.href}
             href={t.href}
-            className={`font-display text-sm tracking-wide uppercase px-4.5 py-2.5 rounded-lg border ${
+            className={`fade-in-up font-display text-sm tracking-wide uppercase px-4.5 py-2.5 rounded-lg border transition-all duration-150 ${
               pathname === t.href
                 ? 'bg-red text-paper border-red shadow-xl'
-                : 'bg-bgElevated text-paperDim border-line hover:border-red hover:text-paper'
+                : 'bg-bgElevated text-paperDim border-line hover:border-red hover:text-paper hover:-translate-y-0.5'
             }`}
+            style={{ animationDelay: `${i * 40}ms` }}
           >
             {t.label}
           </Link>
