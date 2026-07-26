@@ -56,6 +56,7 @@ create table if not exists public.orders (
   opened_at timestamptz default now(),
   closed_at timestamptz,
   opened_by uuid references public.profiles(id),
+  customer_id uuid references public.profiles(id),
   total numeric(10,2) default 0
 );
 
@@ -179,3 +180,43 @@ where not exists (select 1 from public.products);
 --
 -- update public.profiles set role = 'admin' where email = 'seuemail@gmail.com';
 -- ============================================================
+
+-- ============================================================
+-- PONTOS DE CLIENTES, CONFIGURAÇÕES E ESTOQUE
+-- (ver supabase/migration-clientes-estoque.sql para o detalhe
+-- completo dessas tabelas, policies e da função get_leaderboard)
+-- ============================================================
+create table if not exists public.loyalty_transactions (
+  id uuid primary key default gen_random_uuid(),
+  customer_id uuid references public.profiles(id) on delete cascade,
+  points int not null,
+  reason text,
+  order_id uuid references public.orders(id) on delete set null,
+  created_by uuid references public.profiles(id),
+  created_at timestamptz default now()
+);
+
+create table if not exists public.app_settings (
+  id int primary key default 1,
+  leaderboard_visible boolean not null default true,
+  points_per_real numeric not null default 1,
+  constraint single_row check (id = 1)
+);
+insert into public.app_settings (id) values (1) on conflict (id) do nothing;
+
+create table if not exists public.stock_items (
+  id uuid primary key default gen_random_uuid(),
+  name text not null,
+  unit text not null default 'un',
+  qty numeric not null default 0,
+  min_qty numeric not null default 0,
+  created_at timestamptz default now()
+);
+
+create table if not exists public.product_stock_usage (
+  id uuid primary key default gen_random_uuid(),
+  product_id uuid references public.products(id) on delete cascade,
+  stock_item_id uuid references public.stock_items(id) on delete cascade,
+  qty_per_unit numeric not null default 1,
+  unique (product_id, stock_item_id)
+);

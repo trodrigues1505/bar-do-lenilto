@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/app/providers'
+import { adjustStockForProduct } from '@/lib/stock'
 
 type Product = { id: string; name: string; price: number; category: string }
 type Item = {
@@ -14,6 +15,7 @@ type Item = {
   paid_qty: number
 }
 type TableRow = { id: string; number: number; status: 'livre' | 'ocupada' }
+type Customer = { id: string; full_name: string | null; email: string | null }
 
 const fmt = (n: number) => 'R$ ' + n.toFixed(2).replace('.', ',')
 
@@ -38,6 +40,11 @@ export default function OrderPanel({
   const [settlingItem, setSettlingItem] = useState<string | null>(null)
   const [settleQty, setSettleQty] = useState(1)
 
+  const [customerId, setCustomerId] = useState<string | null>(null)
+  const [customers, setCustomers] = useState<Customer[]>([])
+  const [customerSearch, setCustomerSearch] = useState('')
+  const [showCustomerPicker, setShowCustomerPicker] = useState(false)
+
   const total = items.reduce((sum, it) => sum + it.unit_price * it.qty, 0)
   const totalPago = items.reduce((sum, it) => sum + it.unit_price * it.paid_qty, 0)
   const totalPendente = total - totalPago
@@ -53,6 +60,7 @@ export default function OrderPanel({
 
     if (order) {
       setOrderId(order.id)
+      setCustomerId(order.customer_id || null)
       const { data: orderItems } = await supabase
         .from('order_items')
         .select('*')
@@ -60,12 +68,19 @@ export default function OrderPanel({
       setItems(orderItems || [])
     } else {
       setOrderId(null)
+      setCustomerId(null)
       setItems([])
     }
     setLoading(false)
   }
 
   useEffect(() => { loadOrder() }, [table.id])
+
+  useEffect(() => {
+    if (!isStaff) return
+    supabase.from('profiles').select('id, full_name, email').eq('role', 'cliente').order('full_name')
+      .then(({ data }) => setCustomers(data || []))
+  }, [isStaff])
 
   const ensureOrder = async () => {
     if (orderId) return orderId
@@ -78,6 +93,14 @@ export default function OrderPanel({
     await supabase.from('bar_tables').update({ status: 'ocupada' }).eq('id', table.id)
     setOrderId(newOrder.id)
     return newOrder.id as string
+  }
+
+  const attachCustomer = async (id: string | null) => {
+    const oid = await ensureOrder()
+    if (!oid) return
+    await supabase.from('orders').update({ customer_id: id }).eq('id', oid)
+    setCustomerId(id)
+    setShowCustomerPicker(false)
   }
 
   const addItem = async () => {
@@ -98,14 +121,16 @@ export default function OrderPanel({
         qty,
       })
     }
+    await adjustStockForProduct(product.id, qty)
     await loadOrder()
     onChanged()
   }
 
   const changeQty = async (item: Item, delta: number) => {
     const newQty = Math.max(item.paid_qty, item.qty + delta)
-    if (newQty < 1) return
+    if (newQty < 1 || newQty === item.qty) return
     await supabase.from('order_items').update({ qty: newQty }).eq('id', item.id)
+    await adjustStockForProduct(item.product_id, newQty - item.qty)
     await loadOrder()
   }
 
@@ -115,6 +140,7 @@ export default function OrderPanel({
       return
     }
     await supabase.from('order_items').delete().eq('id', item.id)
+    await adjustStockForProduct(item.product_id, -item.qty)
     const remaining = items.filter(it => it.id !== item.id)
     if (remaining.length === 0 && orderId) {
       await supabase.from('bar_tables').update({ status: 'livre' }).eq('id', table.id)
@@ -151,12 +177,29 @@ export default function OrderPanel({
       ? `Ainda falta ${fmt(totalPendente)} pra quitar nessa mesa. Mesmo assim fechar o pedido (total: ${fmt(total)})?`
       : `Fechar o pedido da Mesa ${table.number} no valor de ${fmt(total)}?`
     if (!confirm(msg)) return
+
     await supabase.from('orders').update({
       status: 'fechado',
       closed_at: new Date().toISOString(),
       total,
     }).eq('id', orderId)
     await supabase.from('bar_tables').update({ status: 'livre' }).eq('id', table.id)
+
+    if (customerId) {
+      const { data: settings } = await supabase.from('app_settings').select('points_per_real').eq('id', 1).single()
+      const ratio = settings?.points_per_real ?? 1
+      const points = Math.round(total * ratio)
+      if (points > 0) {
+        await supabase.from('loyalty_transactions').insert({
+          customer_id: customerId,
+          points,
+          reason: `Compra na Mesa ${table.number}`,
+          order_id: orderId,
+          created_by: user?.id,
+        })
+      }
+    }
+
     onChanged()
     onClose()
   }
@@ -166,10 +209,28 @@ export default function OrderPanel({
       ? `A Mesa ${table.number} tem um pedido em aberto. Excluir mesmo assim? Isso apaga a mesa e todo o histórico dela.`
       : `Excluir a Mesa ${table.number}? Isso apaga o histórico de pedidos dessa mesa também.`
     if (!confirm(warn)) return
-    await supabase.from('bar_tables').delete().eq('id', table.id)
+
+    const { error, count } = await supabase
+      .from('bar_tables')
+      .delete({ count: 'exact' })
+      .eq('id', table.id)
+
+    if (error) {
+      alert('Erro ao excluir mesa: ' + error.message)
+      return
+    }
+    if (!count) {
+      alert('Não foi possível excluir — confira se a permissão "admin_delete_tables" foi criada no Supabase (SQL Editor).')
+      return
+    }
     onChanged()
     onClose()
   }
+
+  const selectedCustomer = customers.find(c => c.id === customerId)
+  const filteredCustomers = customers.filter(c =>
+    (c.full_name || c.email || '').toLowerCase().includes(customerSearch.toLowerCase())
+  )
 
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-5" onClick={(e) => e.target === e.currentTarget && onClose()}>
@@ -180,6 +241,50 @@ export default function OrderPanel({
         </div>
 
         <div className="px-6 py-4">
+          {isStaff && (
+            <div className="mb-4">
+              {selectedCustomer ? (
+                <div className="flex items-center justify-between bg-bgCard border border-line rounded-lg px-3 py-2 text-sm">
+                  <span>👤 {selectedCustomer.full_name || selectedCustomer.email}</span>
+                  <button onClick={() => attachCustomer(null)} className="text-muted hover:text-red-bright text-xs bg-transparent border-none cursor-pointer">
+                    remover
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={() => setShowCustomerPicker(v => !v)}
+                  className="text-xs border border-dashed border-line rounded-lg px-3 py-2 text-muted hover:border-red hover:text-paper w-full text-left"
+                >
+                  + Vincular cliente cadastrado (pra pontuar)
+                </button>
+              )}
+              {showCustomerPicker && !selectedCustomer && (
+                <div className="mt-2 bg-bgCard border border-line rounded-lg p-2.5">
+                  <input
+                    value={customerSearch}
+                    onChange={(e) => setCustomerSearch(e.target.value)}
+                    placeholder="Buscar cliente por nome..."
+                    className="w-full bg-bg border border-line rounded px-2.5 py-1.5 mb-2 text-sm"
+                  />
+                  <div className="max-h-40 overflow-y-auto">
+                    {filteredCustomers.length === 0 && (
+                      <div className="text-xs text-muted py-2">Nenhum cliente encontrado.</div>
+                    )}
+                    {filteredCustomers.map(c => (
+                      <button
+                        key={c.id}
+                        onClick={() => attachCustomer(c.id)}
+                        className="block w-full text-left text-sm py-1.5 px-1 hover:text-red-bright bg-transparent border-none cursor-pointer"
+                      >
+                        {c.full_name || c.email}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
           {isStaff && (
             <div className="flex gap-2 mb-4">
               <select

@@ -25,6 +25,8 @@ export default function Topbar() {
   const tabs = [
     { href: '/mesas/', label: 'Mesas', show: true },
     { href: '/produtos/', label: 'Produtos', show: isStaff },
+    { href: '/clientes/', label: isStaff ? 'Clientes' : 'Top Clientes', show: true },
+    { href: '/estoque/', label: 'Estoque', show: isStaff },
     { href: '/usuarios/', label: 'Usuários', show: isAdmin },
   ]
 
@@ -99,11 +101,6 @@ export default function Topbar() {
             {t.label}
           </Link>
         ))}
-        {isAdmin && (
-          <span className="font-display text-sm tracking-wide uppercase px-4.5 py-2.5 rounded-lg border border-line bg-bgElevated text-muted">
-            Estoque <span className="text-[10px] align-middle ml-1 bg-bgCard border border-line px-2 py-0.5 rounded-full">Em breve</span>
-          </span>
-        )}
       </div>
     </>
   )
