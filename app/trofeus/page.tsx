@@ -31,9 +31,6 @@ export default function TrofeusPage() {
   const [description, setDescription] = useState('')
   const [icon, setIcon] = useState('🏆')
   const [productId, setProductId] = useState('')
-  const [firstThreshold, setFirstThreshold] = useState('')
-  const [firstTitle, setFirstTitle] = useState('')
-  const [creating, setCreating] = useState(false)
 
   const [newLevelTrophy, setNewLevelTrophy] = useState<string | null>(null)
   const [levelThreshold, setLevelThreshold] = useState('')
@@ -66,59 +63,33 @@ export default function TrofeusPage() {
   useEffect(() => { if (user) load() }, [user, isAdmin])
 
   const createTrophy = async () => {
-    if (!name.trim()) { alert('Dá um nome pro troféu primeiro.'); return }
-    if (!productId) { alert('Escolhe qual produto esse troféu vai contar.'); return }
-    const threshold = parseInt(firstThreshold)
-    if (isNaN(threshold) || threshold <= 0) { alert('Preenche quantas vezes é preciso pedir pra desbloquear o primeiro nível (ex: 10).'); return }
-    if (!firstTitle.trim()) { alert('Dá um título pro primeiro nível (ex: Cantor Iniciante).'); return }
-
-    setCreating(true)
-    const { data: trophy, error } = await supabase.from('trophies').insert({
+    if (!name.trim() || !productId) return
+    await supabase.from('trophies').insert({
       name: name.trim(), description: description.trim() || null, icon: icon.trim() || '🏆',
       product_id: productId, created_by: user?.id,
-    }).select().single()
-
-    if (error || !trophy) {
-      alert('Erro ao criar troféu: ' + (error?.message || 'motivo desconhecido') + '\n\nConfira se a migração "migration-trofeus.sql" foi rodada no Supabase.')
-      setCreating(false)
-      return
-    }
-
-    const { error: levelError } = await supabase.from('trophy_levels').insert({
-      trophy_id: trophy.id, threshold, title: firstTitle.trim(), sort_order: threshold,
     })
-    if (levelError) {
-      alert('O troféu foi criado, mas deu erro ao criar o primeiro nível: ' + levelError.message)
-    }
-
     setName(''); setDescription(''); setIcon('🏆'); setProductId('')
-    setFirstThreshold(''); setFirstTitle('')
-    setCreating(false)
     await load()
   }
 
   const removeTrophy = async (id: string) => {
     if (!confirm('Excluir esse troféu e todos os níveis dele?')) return
-    const { error } = await supabase.from('trophies').delete().eq('id', id)
-    if (error) { alert('Erro ao excluir: ' + error.message); return }
+    await supabase.from('trophies').delete().eq('id', id)
     await load()
   }
 
   const addLevel = async (trophyId: string) => {
     const threshold = parseInt(levelThreshold)
-    if (isNaN(threshold) || threshold <= 0) { alert('Preenche quantas vezes é preciso pra esse nível.'); return }
-    if (!levelTitle.trim()) { alert('Dá um título pra esse nível.'); return }
-    const { error } = await supabase.from('trophy_levels').insert({
+    if (isNaN(threshold) || !levelTitle.trim()) return
+    await supabase.from('trophy_levels').insert({
       trophy_id: trophyId, threshold, title: levelTitle.trim(), sort_order: threshold,
     })
-    if (error) { alert('Erro ao adicionar nível: ' + error.message); return }
     setLevelThreshold(''); setLevelTitle(''); setNewLevelTrophy(null)
     await load()
   }
 
   const removeLevel = async (id: string) => {
-    const { error } = await supabase.from('trophy_levels').delete().eq('id', id)
-    if (error) { alert('Erro ao remover nível: ' + error.message); return }
+    await supabase.from('trophy_levels').delete().eq('id', id)
     await load()
   }
 
@@ -192,32 +163,21 @@ export default function TrofeusPage() {
       <Topbar />
       <h2 className="text-xl mb-4">Troféus ({trophies.length})</h2>
 
-      <div className="bg-bgElevated border border-line rounded-xl p-4 mb-6">
-        <div className="text-[11px] tracking-wide uppercase text-muted mb-2.5">Novo troféu</div>
-        <div className="grid gap-2.5 mb-2.5" style={{ gridTemplateColumns: '2fr 2fr 70px 2fr' }}>
-          <input value={name} onChange={e => setName(e.target.value)} placeholder="Nome (ex: Gogó de Ouro)"
-            className="bg-bg border border-line rounded-lg px-3 py-2.5" />
-          <input value={description} onChange={e => setDescription(e.target.value)} placeholder="Descrição (opcional)"
-            className="bg-bg border border-line rounded-lg px-3 py-2.5" />
-          <input value={icon} onChange={e => setIcon(e.target.value)} placeholder="🏆"
-            className="bg-bg border border-line rounded-lg px-3 py-2.5 text-center" />
-          <select value={productId} onChange={e => setProductId(e.target.value)}
-            className="bg-bg border border-line rounded-lg px-3 py-2.5">
-            <option value="">Produto contado...</option>
-            {products.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-          </select>
-        </div>
-        <div className="text-[11px] tracking-wide uppercase text-muted mb-2.5">Primeiro nível (dá pra adicionar mais depois)</div>
-        <div className="grid gap-2.5" style={{ gridTemplateColumns: '1fr 2fr auto' }}>
-          <input value={firstThreshold} onChange={e => setFirstThreshold(e.target.value)} type="number"
-            placeholder="Quantas vezes (ex: 10)" className="bg-bg border border-line rounded-lg px-3 py-2.5" />
-          <input value={firstTitle} onChange={e => setFirstTitle(e.target.value)}
-            placeholder="Título (ex: Cantor Iniciante)" className="bg-bg border border-line rounded-lg px-3 py-2.5" />
-          <button onClick={createTrophy} disabled={creating}
-            className="bg-red hover:bg-red-bright disabled:opacity-50 rounded-lg px-5 font-display tracking-wide">
-            {creating ? 'Criando...' : 'Criar troféu'}
-          </button>
-        </div>
+      <div className="grid gap-2.5 mb-6" style={{ gridTemplateColumns: '2fr 2fr 80px 2fr auto' }}>
+        <input value={name} onChange={e => setName(e.target.value)} placeholder="Nome (ex: Gogó de Ouro)"
+          className="bg-bgElevated border border-line rounded-lg px-3 py-2.5" />
+        <input value={description} onChange={e => setDescription(e.target.value)} placeholder="Descrição (opcional)"
+          className="bg-bgElevated border border-line rounded-lg px-3 py-2.5" />
+        <input value={icon} onChange={e => setIcon(e.target.value)} placeholder="🏆"
+          className="bg-bgElevated border border-line rounded-lg px-3 py-2.5 text-center" />
+        <select value={productId} onChange={e => setProductId(e.target.value)}
+          className="bg-bgElevated border border-line rounded-lg px-3 py-2.5">
+          <option value="">Produto contado...</option>
+          {products.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+        </select>
+        <button onClick={createTrophy} className="bg-red hover:bg-red-bright rounded-lg px-4 font-display tracking-wide">
+          Criar
+        </button>
       </div>
 
       {loadingData ? (
