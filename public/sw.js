@@ -1,4 +1,4 @@
-const CACHE_NAME = 'bar-do-lenilto-v2';
+const CACHE_NAME = 'bar-do-lenilto-v3';
 const APP_SHELL = ['./', './manifest.json', './icons/icon-192.png', './icons/icon-512.png'];
 
 self.addEventListener('install', (event) => {
