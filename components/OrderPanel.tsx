@@ -15,7 +15,8 @@ type Item = {
   paid_qty: number
   customer_id: string | null
 }
-type TableRow = { id: string; number: number; status: 'livre' | 'ocupada' }
+type TableStatus = 'livre' | 'ocupada' | 'reservada'
+type TableRow = { id: string; number: number; status: TableStatus }
 type Customer = { id: string; full_name: string | null; email: string | null }
 type Payment = { id: string; amount: number; payer_customer_id: string | null; method: string | null; created_at: string }
 
@@ -37,6 +38,8 @@ export default function OrderPanel({
   const { isStaff, isAdmin, user } = useAuth()
   const supabase = createClient()
   const [orderId, setOrderId] = useState<string | null>(null)
+  const [billRequested, setBillRequested] = useState(false)
+  const [tableStatus, setTableStatus] = useState<TableStatus>(table.status)
   const [items, setItems] = useState<Item[]>([])
   const [payments, setPayments] = useState<Payment[]>([])
   const [checkins, setCheckins] = useState<Customer[]>([])
@@ -65,6 +68,9 @@ export default function OrderPanel({
 
   const loadOrder = async () => {
     setLoading(true)
+    const { data: freshTable } = await supabase.from('bar_tables').select('status').eq('id', table.id).single()
+    if (freshTable) setTableStatus(freshTable.status)
+
     const { data: order } = await supabase
       .from('orders')
       .select('*')
@@ -74,6 +80,7 @@ export default function OrderPanel({
 
     if (order) {
       setOrderId(order.id)
+      setBillRequested(order.bill_requested || false)
       const [{ data: orderItems }, { data: orderPayments }] = await Promise.all([
         supabase.from('order_items').select('*').eq('order_id', order.id),
         supabase.from('order_payments').select('*').eq('order_id', order.id).order('created_at'),
@@ -82,6 +89,7 @@ export default function OrderPanel({
       setPayments(orderPayments || [])
     } else {
       setOrderId(null)
+      setBillRequested(false)
       setItems([])
       setPayments([])
     }
@@ -112,8 +120,29 @@ export default function OrderPanel({
       .single()
     if (error || !newOrder) return null
     await supabase.from('bar_tables').update({ status: 'ocupada' }).eq('id', table.id)
+    setTableStatus('ocupada')
     setOrderId(newOrder.id)
     return newOrder.id as string
+  }
+
+  const toggleBillRequested = async () => {
+    const oid = await ensureOrder()
+    if (!oid) return
+    const next = !billRequested
+    await supabase.from('orders').update({ bill_requested: next }).eq('id', oid)
+    setBillRequested(next)
+  }
+
+  const markReserved = async () => {
+    await supabase.from('bar_tables').update({ status: 'reservada' }).eq('id', table.id)
+    setTableStatus('reservada')
+    onChanged()
+  }
+
+  const cancelReservation = async () => {
+    await supabase.from('bar_tables').update({ status: 'livre' }).eq('id', table.id)
+    setTableStatus('livre')
+    onChanged()
   }
 
   const addCheckin = async (customer: Customer) => {
@@ -163,7 +192,6 @@ export default function OrderPanel({
     await loadOrder()
   }
 
-  // "Dar baixa" aqui = remover um item lançado por engano. Só admin.
   const removeItem = async (item: Item) => {
     if (item.paid_qty > 0) {
       alert('Esse item já tem pagamento registrado em cima dele — não dá pra remover.')
@@ -175,6 +203,7 @@ export default function OrderPanel({
     const remaining = items.filter(it => it.id !== item.id)
     if (remaining.length === 0 && orderId) {
       await supabase.from('bar_tables').update({ status: 'livre' }).eq('id', table.id)
+      setTableStatus('livre')
     }
     await loadOrder()
     onChanged()
@@ -288,11 +317,26 @@ export default function OrderPanel({
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-5" onClick={(e) => e.target === e.currentTarget && onClose()}>
       <div className="panel-enter card w-full max-w-xl max-h-[88vh] overflow-y-auto shadow-2xl">
         <div className="flex items-center justify-between px-6 py-4 border-b border-line sticky top-0 bg-bgElevated z-10">
-          <h2 className="text-2xl m-0">Mesa {table.number}</h2>
+          <div className="flex items-center gap-2.5">
+            <h2 className="text-2xl m-0">Mesa {table.number}</h2>
+            {tableStatus === 'reservada' && (
+              <span className="text-[10px] uppercase tracking-wide bg-amber-500/20 border border-amber-500 text-amber-400 px-2 py-0.5 rounded-full">Reservada</span>
+            )}
+            {billRequested && tableStatus === 'ocupada' && (
+              <span className="text-[10px] uppercase tracking-wide bg-blue-500/20 border border-blue-400 text-blue-300 px-2 py-0.5 rounded-full">Conta pedida</span>
+            )}
+          </div>
           <button onClick={onClose} className="btn btn-ghost text-2xl">✕</button>
         </div>
 
         <div className="px-6 py-4">
+          {isStaff && tableStatus === 'livre' && (
+            <button onClick={markReserved} className="btn btn-outline btn-sm mb-4">📅 Marcar como reservada</button>
+          )}
+          {isStaff && tableStatus === 'reservada' && (
+            <button onClick={cancelReservation} className="btn btn-outline btn-sm mb-4">Cancelar reserva</button>
+          )}
+
           {isStaff && (
             <div className="mb-5">
               <div className="text-[11px] tracking-wide uppercase text-muted mb-2">Clientes na mesa</div>
@@ -378,6 +422,10 @@ export default function OrderPanel({
 
           {isStaff && orderId && (
             <div className="mt-5">
+              <button onClick={toggleBillRequested} className={`btn btn-sm mb-4 ${billRequested ? 'btn-solid' : 'btn-outline'}`} style={billRequested ? { background: '#5a96e6' } : {}}>
+                {billRequested ? '🔵 Conta solicitada (clique pra desmarcar)' : '🔔 Pedir conta'}
+              </button>
+
               <div className="flex items-center justify-between mb-2">
                 <div className="text-[11px] tracking-wide uppercase text-muted">Pagamentos registrados</div>
               </div>
@@ -488,7 +536,7 @@ export default function OrderPanel({
             <span className="text-muted text-xs tracking-wide uppercase">Falta pagar</span>
             <span className="font-display text-3xl text-red-bright">{fmt(totalPendente)}</span>
           </div>
-          {isStaff && table.status === 'ocupada' && (
+          {isStaff && tableStatus === 'ocupada' && (
             <button onClick={closeOrder} disabled={items.length === 0} className="btn w-full py-3" style={{ background: quitado ? '#4ade80' : '#22c55e', color: '#0c0909', fontFamily: 'Anton', letterSpacing: '1px', textTransform: 'uppercase' }}>
               Fechar Pedido
             </button>
@@ -502,4 +550,4 @@ export default function OrderPanel({
       </div>
     </div>
   )
-}   
+}
