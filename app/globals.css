@@ -233,3 +233,11 @@ h1, h2, h3, .display {
 .pulse-success {
   animation: softPulse 1.8s ease-in-out infinite;
 }
+/* ---------- Estado "conta solicitada" ---------- */
+@keyframes tablePulseBlue {
+  0%, 100% { filter: drop-shadow(0 0 0 rgba(90, 150, 230, 0)); }
+  50% { filter: drop-shadow(0 0 16px rgba(90, 150, 230, 0.7)); }
+}
+.table-pulse-blue {
+  animation: tablePulseBlue 1.6s ease-in-out infinite;
+}
