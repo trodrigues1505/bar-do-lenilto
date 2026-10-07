@@ -1,21 +1,41 @@
 'use client'
 
-import { Fragment, useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
+import { Crown, History, Lock, Medal, SlidersHorizontal, Trophy, Users } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/app/providers'
-import Topbar from '@/components/Topbar'
+import PageShell, { FullScreenLoading } from '@/components/PageShell'
+import {
+  Avatar,
+  Badge,
+  Button,
+  Card,
+  EmptyState,
+  Field,
+  Input,
+  LoadingBlock,
+  Segmented,
+  Switch,
+  cn,
+  fmtMoney as fmt,
+  useUI,
+} from '@/components/ui'
 
 type LeaderRow = { customer_id: string; full_name: string | null; email: string | null; total_points: number }
 type ClientProfile = { id: string; full_name: string | null; email: string | null; created_at: string }
 type HistoryRow = { product_name: string; qty: number; unit_price: number; created_at: string; table_number: number | null }
 
-const fmt = (n: number) => 'R$ ' + n.toFixed(2).replace('.', ',')
+const PERIOD_OPTIONS = [
+  { value: 'month' as const, label: 'Este mês' },
+  { value: 'all' as const, label: 'Geral' },
+]
 
 export default function ClientesPage() {
   const { user, isStaff, isAdmin, loading: authLoading } = useAuth()
   const router = useRouter()
   const supabase = createClient()
+  const { toast } = useUI()
 
   const [period, setPeriod] = useState<'month' | 'all'>('month')
   const [leaderboard, setLeaderboard] = useState<LeaderRow[]>([])
@@ -61,28 +81,31 @@ export default function ClientesPage() {
   useEffect(() => { if (user) loadAll() }, [user, isStaff])
   useEffect(() => { if (user) loadLeaderboard(period) }, [period])
 
-  const toggleVisibility = async () => {
-    const newVal = !settingsVisible
+  const toggleVisibility = async (newVal: boolean) => {
     setSettingsVisible(newVal)
-    await supabase.from('app_settings').update({ leaderboard_visible: newVal }).eq('id', 1)
+    const { error } = await supabase.from('app_settings').update({ leaderboard_visible: newVal }).eq('id', 1)
+    if (error) { toast.error('Não foi possível salvar: ' + error.message); setSettingsVisible(!newVal) }
   }
 
   const savePointsRatio = async (value: number) => {
     setPointsPerReal(value)
-    await supabase.from('app_settings').update({ points_per_real: value }).eq('id', 1)
+    const { error } = await supabase.from('app_settings').update({ points_per_real: value }).eq('id', 1)
+    if (error) toast.error('Não foi possível salvar: ' + error.message)
   }
 
   const pointsFor = (clientId: string) => leaderboard.find(l => l.customer_id === clientId)?.total_points ?? 0
 
   const submitAdjust = async (clientId: string) => {
     const points = parseInt(adjustPoints)
-    if (isNaN(points) || points === 0) return
-    await supabase.from('loyalty_transactions').insert({
+    if (isNaN(points) || points === 0) { toast.error('Informe os pontos, por exemplo +10 ou -10.'); return }
+    const { error } = await supabase.from('loyalty_transactions').insert({
       customer_id: clientId,
       points,
       reason: adjustReason.trim() || (points > 0 ? 'Ajuste manual' : 'Desconto por comportamento inadequado'),
       created_by: user?.id,
     })
+    if (error) { toast.error('Não foi possível ajustar: ' + error.message); return }
+    toast.success(`${points > 0 ? '+' : ''}${points} pontos aplicados.`)
     setAdjustingId(null)
     setAdjustPoints('')
     setAdjustReason('')
@@ -92,6 +115,7 @@ export default function ClientesPage() {
   const toggleHistory = async (clientId: string) => {
     if (historyId === clientId) { setHistoryId(null); return }
     setHistoryId(clientId)
+    setAdjustingId(null)
     setLoadingHistory(true)
     const { data, error } = await supabase
       .from('order_items')
@@ -101,6 +125,7 @@ export default function ClientesPage() {
       .limit(50)
     if (error) {
       console.error(error)
+      toast.error('Não foi possível carregar o histórico.')
       setHistoryRows([])
     } else {
       setHistoryRows((data || []).map((r: any) => ({
@@ -111,172 +136,187 @@ export default function ClientesPage() {
     setLoadingHistory(false)
   }
 
-  if (authLoading) {
-    return <div className="min-h-screen flex items-center justify-center text-muted text-sm">Carregando...</div>
-  }
+  if (authLoading) return <FullScreenLoading />
   if (!user) return null
 
   // -------- Visão do cliente (sem função administrativa) --------
   if (!isStaff) {
     const myRank = leaderboard.findIndex(l => l.customer_id === user.id)
+    const medalTone = ['text-warn', 'text-ink2', 'text-red-bright']
     return (
-      <div className="max-w-6xl mx-auto px-5 pt-5 pb-20">
-        <Topbar />
-        <h2 className="text-xl mb-1">Top Clientes 🏆</h2>
-        <p className="text-muted text-sm mb-5">Pontos acumulados por consumo no bar.</p>
-
-        <div className="flex gap-1.5 bg-bgElevated border border-line rounded-lg p-1 mb-5 w-fit">
-          <button onClick={() => setPeriod('month')} className={`btn btn-sm ${period === 'month' ? 'btn-solid' : 'btn-ghost'}`}>Este mês</button>
-          <button onClick={() => setPeriod('all')} className={`btn btn-sm ${period === 'all' ? 'btn-solid' : 'btn-ghost'}`}>Geral</button>
-        </div>
-
+      <PageShell
+        title="Top clientes"
+        subtitle="Pontos acumulados por consumo no bar."
+        actions={<Segmented value={period} onChange={setPeriod} options={PERIOD_OPTIONS} />}
+      >
         {!settingsVisible ? (
-          <div className="text-center text-muted py-10 text-sm">
-            O ranking está privado no momento. Pergunte ao atendente quantos pontos você já tem!
-          </div>
+          <Card>
+            <EmptyState
+              icon={Lock}
+              title="O ranking está privado"
+              description="Pergunte ao atendente quantos pontos você já tem."
+            />
+          </Card>
         ) : leaderboard.length === 0 ? (
-          <div className="text-center text-muted py-10 text-sm">Ninguém pontuou ainda nesse período.</div>
+          <Card>
+            <EmptyState icon={Trophy} title="Ninguém pontuou ainda" description="Os pontos aparecem aqui assim que os primeiros pagamentos forem registrados neste período." />
+          </Card>
         ) : (
-          <div className="card overflow-hidden">
-            {leaderboard.map((l, i) => (
-              <div key={l.customer_id} className={`fade-in-up flex items-center justify-between px-4 py-3 border-b border-line last:border-b-0 ${l.customer_id === user.id ? 'bg-red/10' : ''}`} style={{ animationDelay: `${i * 40}ms` }}>
-                <div className="flex items-center gap-3">
-                  <span className="font-display text-lg w-6 text-muted">{i + 1}º</span>
-                  <span>{l.full_name || l.email}{l.customer_id === user.id && <span className="text-red-bright text-xs ml-2">(você)</span>}</span>
-                </div>
-                <span className="font-display text-red-bright">{l.total_points} pts</span>
-              </div>
-            ))}
-          </div>
+          <ol className="divide-y divide-line overflow-hidden rounded-2xl border border-line bg-surface">
+            {leaderboard.map((l, i) => {
+              const mine = l.customer_id === user.id
+              return (
+                <li key={l.customer_id} className={cn('flex items-center gap-3 px-4 py-3.5', mine && 'bg-red/10')}>
+                  <span className="flex w-8 shrink-0 justify-center">
+                    {i < 3 ? (
+                      <Medal className={cn('h-5 w-5', medalTone[i])} aria-label={`${i + 1}º lugar`} />
+                    ) : (
+                      <span className="text-sm font-medium text-mute tnum">{i + 1}º</span>
+                    )}
+                  </span>
+                  <Avatar name={l.full_name || l.email} />
+                  <span className="min-w-0 flex-1 truncate text-[15px] text-ink">
+                    {l.full_name || l.email}
+                    {mine && <span className="ml-2 text-xs text-red-bright">(você)</span>}
+                  </span>
+                  <span className="shrink-0 text-[15px] font-semibold text-ink tnum">{l.total_points} pts</span>
+                </li>
+              )
+            })}
+          </ol>
         )}
 
-        {myRank === -1 && (
-          <p className="text-muted text-xs mt-5 text-center">
-            Você ainda não tem pontos nesse período — consuma no bar com seu perfil vinculado à mesa!
+        {settingsVisible && leaderboard.length > 0 && myRank === -1 && (
+          <p className="mt-5 text-center text-sm text-mute">
+            Você ainda não tem pontos neste período. Peça para o atendente te vincular à mesa e os pontos começam a contar.
           </p>
         )}
-      </div>
+      </PageShell>
     )
   }
 
   // -------- Visão staff (admin/funcionário) --------
-  return (
-    <div className="max-w-6xl mx-auto px-5 pt-5 pb-20">
-      <Topbar />
-      <div className="flex items-center justify-between mb-1 flex-wrap gap-3">
-        <h2 className="text-xl m-0">Clientes ({clients.length})</h2>
-        <div className="flex gap-1.5 bg-bgElevated border border-line rounded-lg p-1">
-          <button onClick={() => setPeriod('month')} className={`btn btn-sm ${period === 'month' ? 'btn-solid' : 'btn-ghost'}`}>Este mês</button>
-          <button onClick={() => setPeriod('all')} className={`btn btn-sm ${period === 'all' ? 'btn-solid' : 'btn-ghost'}`}>Geral</button>
-        </div>
-      </div>
-      <p className="text-muted text-sm mb-5">
-        Pontos ganhos automaticamente a cada pagamento registrado com um cliente vinculado
-        ({pointsPerReal} pt por R$1). Dá pra ajustar pontos manualmente (inclusive descontar).
-      </p>
+  const sorted = [...clients].sort((a, b) => pointsFor(b.id) - pointsFor(a.id))
 
+  return (
+    <PageShell
+      title="Clientes"
+      subtitle={`${clients.length} ${clients.length === 1 ? 'cliente' : 'clientes'} · ${pointsPerReal} ponto${pointsPerReal === 1 ? '' : 's'} por R$ 1 pago`}
+      actions={<Segmented value={period} onChange={setPeriod} options={PERIOD_OPTIONS} />}
+    >
       {isAdmin && (
-        <div className="card p-4 mb-6 flex flex-wrap items-center gap-6">
-          <label className="flex items-center gap-2.5 text-sm cursor-pointer">
-            <input type="checkbox" checked={settingsVisible} onChange={toggleVisibility} className="w-4 h-4" />
-            Lista de pontos visível pros clientes
-          </label>
-          <label className="flex items-center gap-2.5 text-sm">
-            Pontos por R$1:
+        <Card className="mb-6 flex flex-wrap items-center justify-between gap-x-8 gap-y-4 p-4 sm:p-5">
+          <Switch checked={settingsVisible} onChange={toggleVisibility} label="Mostrar o ranking para os clientes" />
+          <label className="flex items-center gap-3 text-sm text-ink2">
+            Pontos por R$ 1
             <input
-              type="number" step="0.1" value={pointsPerReal}
-              onChange={(e) => savePointsRatio(parseFloat(e.target.value) || 0)}
-              className="field-input w-20"
+              type="number"
+              step="0.1"
+              min="0"
+              value={pointsPerReal}
+              onChange={e => savePointsRatio(parseFloat(e.target.value) || 0)}
+              aria-label="Pontos por real pago"
+              className="h-10 w-20 rounded-[10px] border border-line bg-bg px-3 text-center text-sm text-ink transition-colors hover:border-lineStrong focus:border-red focus:outline-none focus:ring-2 focus:ring-red/25"
             />
           </label>
-        </div>
+        </Card>
       )}
 
       {loadingData ? (
-        <div className="text-center text-muted py-8 text-sm">Carregando...</div>
+        <LoadingBlock />
       ) : clients.length === 0 ? (
-        <div className="text-center text-muted py-8 text-sm">Nenhum cliente logou ainda.</div>
+        <Card>
+          <EmptyState icon={Users} title="Nenhum cliente ainda" description="Os clientes aparecem aqui depois do primeiro login com o Google." />
+        </Card>
       ) : (
-        <table className="w-full border-collapse">
-          <thead>
-            <tr>
-              <th className="text-left text-[11px] tracking-wide uppercase text-muted px-2.5 py-2 border-b border-line">Nome</th>
-              <th className="text-left text-[11px] tracking-wide uppercase text-muted px-2.5 py-2 border-b border-line">E-mail</th>
-              <th className="text-left text-[11px] tracking-wide uppercase text-muted px-2.5 py-2 border-b border-line">Pontos</th>
-              {isAdmin && <th className="border-b border-line"></th>}
-            </tr>
-          </thead>
-          <tbody>
-            {[...clients].sort((a, b) => pointsFor(b.id) - pointsFor(a.id)).map(c => (
-              <Fragment key={c.id}>
-                <tr>
-                  <td className="px-2.5 py-2.5 border-b border-line">{c.full_name || '—'}</td>
-                  <td className="px-2.5 py-2.5 border-b border-line text-paperDim">{c.email}</td>
-                  <td className="px-2.5 py-2.5 border-b border-line font-display text-red-bright">{pointsFor(c.id)}</td>
-                  {isAdmin && (
-                    <td className="px-2.5 py-2.5 border-b border-line whitespace-nowrap">
-                      <button onClick={() => setAdjustingId(adjustingId === c.id ? null : c.id)} className="btn btn-ghost btn-sm">
-                        Ajustar pontos
-                      </button>
-                      <button onClick={() => toggleHistory(c.id)} className="btn btn-ghost btn-sm">
-                        Ver histórico
-                      </button>
-                    </td>
-                  )}
-                </tr>
+        <ul className="space-y-3">
+          {sorted.map((c, i) => (
+            <li key={c.id}>
+              <Card className="overflow-hidden">
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-3 p-4">
+                  <div className="flex min-w-0 flex-1 basis-56 items-center gap-3">
+                    <Avatar name={c.full_name || c.email} size="lg" />
+                    <div className="min-w-0">
+                      <p className="flex items-center gap-2 truncate text-[15px] font-medium text-ink">
+                        <span className="truncate">{c.full_name || 'Sem nome'}</span>
+                        {i === 0 && pointsFor(c.id) > 0 && <Crown className="h-4 w-4 shrink-0 text-warn" aria-label="Líder do ranking" />}
+                      </p>
+                      <p className="truncate text-sm text-mute">{c.email}</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <Badge tone={pointsFor(c.id) > 0 ? 'red' : 'neutral'} className="h-7 px-3 text-[13px]">
+                      <span className="tnum">{pointsFor(c.id)} pts</span>
+                    </Badge>
+                    {isAdmin && (
+                      <div className="flex gap-2">
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          icon={SlidersHorizontal}
+                          onClick={() => { setAdjustingId(adjustingId === c.id ? null : c.id); setHistoryId(null) }}
+                          aria-expanded={adjustingId === c.id}
+                        >
+                          Ajustar
+                        </Button>
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          icon={History}
+                          onClick={() => toggleHistory(c.id)}
+                          aria-expanded={historyId === c.id}
+                        >
+                          Histórico
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
                 {adjustingId === c.id && (
-                  <tr>
-                    <td colSpan={4} className="px-2.5 pb-3 border-b border-line">
-                      <div className="card p-3 flex flex-wrap items-center gap-2">
-                        <input
-                          type="number" placeholder="+10 ou -10" value={adjustPoints}
-                          onChange={(e) => setAdjustPoints(e.target.value)}
-                          className="field-input w-24"
-                        />
-                        <input
-                          type="text" placeholder="Motivo (ex: comportamento inadequado)"
-                          value={adjustReason} onChange={(e) => setAdjustReason(e.target.value)}
-                          className="field-input flex-1 min-w-[180px]"
-                        />
-                        <button onClick={() => submitAdjust(c.id)} className="btn btn-solid btn-sm">Aplicar</button>
-                      </div>
-                    </td>
-                  </tr>
+                  <div className="animate-fade-in border-t border-line bg-bg p-4">
+                    <div className="grid gap-3 sm:grid-cols-[110px_1fr_auto] sm:items-end">
+                      <Field label="Pontos">
+                        <Input type="number" placeholder="+10 ou -10" value={adjustPoints} onChange={e => setAdjustPoints(e.target.value)} />
+                      </Field>
+                      <Field label="Motivo (opcional)">
+                        <Input type="text" placeholder="Ex.: comportamento inadequado" value={adjustReason} onChange={e => setAdjustReason(e.target.value)} />
+                      </Field>
+                      <Button variant="primary" size="lg" onClick={() => submitAdjust(c.id)} className="lg:h-11">Aplicar</Button>
+                    </div>
+                  </div>
                 )}
+
                 {historyId === c.id && (
-                  <tr>
-                    <td colSpan={4} className="px-2.5 pb-3 border-b border-line">
-                      <div className="card p-3">
-                        <div className="text-[11px] tracking-wide uppercase text-muted mb-2">Histórico de consumo (últimos 50 itens)</div>
-                        {loadingHistory ? (
-                          <div className="text-center text-muted py-4 text-sm">Carregando...</div>
-                        ) : historyRows.length === 0 ? (
-                          <div className="text-center text-muted py-4 text-sm">Nenhum item atribuído a esse cliente ainda.</div>
-                        ) : (
-                          <div className="max-h-64 overflow-y-auto space-y-1">
-                            {historyRows.map((h, i) => (
-                              <div key={i} className="flex items-center justify-between text-sm py-1 border-b border-line last:border-b-0">
-                                <span>
-                                  {h.qty}x {h.product_name}
-                                  {h.table_number && <span className="text-muted text-xs"> · Mesa {h.table_number}</span>}
-                                </span>
-                                <span className="flex items-center gap-3">
-                                  <span className="text-muted text-xs">{new Date(h.created_at).toLocaleDateString('pt-BR')}</span>
-                                  <span className="font-display text-paperDim">{fmt(h.unit_price * h.qty)}</span>
-                                </span>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
+                  <div className="animate-fade-in border-t border-line bg-bg p-4">
+                    <p className="mb-3 text-xs font-medium text-mute">Últimos 50 itens consumidos</p>
+                    {loadingHistory ? (
+                      <LoadingBlock className="py-6" />
+                    ) : historyRows.length === 0 ? (
+                      <p className="py-4 text-center text-sm text-mute">Nenhum item atribuído a esse cliente ainda.</p>
+                    ) : (
+                      <ul className="max-h-72 divide-y divide-line overflow-y-auto">
+                        {historyRows.map((h, idx) => (
+                          <li key={idx} className="flex items-center justify-between gap-3 py-2.5 text-sm">
+                            <span className="min-w-0 truncate text-ink">
+                              {h.qty}× {h.product_name}
+                              {h.table_number && <span className="text-mute"> · Mesa {h.table_number}</span>}
+                            </span>
+                            <span className="flex shrink-0 items-center gap-3">
+                              <span className="hidden text-xs text-mute sm:inline">{new Date(h.created_at).toLocaleDateString('pt-BR')}</span>
+                              <span className="font-medium text-ink2 tnum">{fmt(h.unit_price * h.qty)}</span>
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
                 )}
-              </Fragment>
-            ))}
-          </tbody>
-        </table>
+              </Card>
+            </li>
+          ))}
+        </ul>
       )}
-    </div>
+    </PageShell>
   )
 }

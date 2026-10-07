@@ -4,9 +4,22 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/app/providers'
-import Topbar from '@/components/Topbar'
+import PageShell, { FullScreenLoading } from '@/components/PageShell'
 import OrderPanel from '@/components/OrderPanel'
 import FloorMap from '@/components/FloorMap'
+import {
+  BellRing,
+  CalendarClock,
+  Clock,
+  LayoutGrid,
+  Map as MapIcon,
+  Plus,
+  Armchair,
+  Hand,
+  TrendingUp,
+  CheckCircle2,
+} from 'lucide-react'
+import { Badge, Button, Card, EmptyState, Segmented, cn, fmtMoney, useUI } from '@/components/ui'
 
 type TableStatus = 'livre' | 'ocupada' | 'reservada'
 type TableRow = { id: string; number: number; status: TableStatus; pos_x: number | null; pos_y: number | null }
@@ -14,7 +27,6 @@ type Product = { id: string; name: string; price: number; category: string }
 type MyTable = { table_id: string; table_number: number; total: number; pending: number; items_summary: string | null }
 type OpenOrderInfo = { table_id: string; opened_at: string; bill_requested: boolean; total: number }
 
-const fmtMoney = (n: number) => 'R$ ' + n.toFixed(2).replace('.', ',')
 const HIGH_VALUE_THRESHOLD = 300
 const LONG_TIME_MINUTES = 45
 
@@ -30,6 +42,7 @@ export default function MesasPage() {
   const { user, isStaff, loading: authLoading } = useAuth()
   const router = useRouter()
   const supabase = createClient()
+  const { toast } = useUI()
   const [tables, setTables] = useState<TableRow[]>([])
   const [products, setProducts] = useState<Product[]>([])
   const [totals, setTotals] = useState<Record<string, number>>({})
@@ -84,43 +97,50 @@ export default function MesasPage() {
     const count = tables.length
     const posX = Math.min(90, Math.max(10, 14 + (count % 5) * 17))
     const posY = Math.min(92, Math.max(10, 80 + Math.floor(count / 5) * 10))
-    await supabase.from('bar_tables').insert({ number: maxNum + 1, pos_x: posX, pos_y: posY })
+    const { error } = await supabase.from('bar_tables').insert({ number: maxNum + 1, pos_x: posX, pos_y: posY })
+    if (error) { toast.error('Não foi possível adicionar a mesa: ' + error.message); return }
+    toast.success(`Mesa ${maxNum + 1} adicionada.`)
     await load()
   }
 
   const updateTablePosition = async (tableId: string, x: number, y: number) => {
     setTables(prev => prev.map(t => t.id === tableId ? { ...t, pos_x: x, pos_y: y } : t))
-    await supabase.from('bar_tables').update({ pos_x: x, pos_y: y }).eq('id', tableId)
+    const { error } = await supabase.from('bar_tables').update({ pos_x: x, pos_y: y }).eq('id', tableId)
+    if (error) toast.error('A nova posição não foi salva: ' + error.message)
   }
 
-  if (authLoading) {
-    return <div className="min-h-screen flex items-center justify-center text-muted text-sm">Carregando...</div>
-  }
+  if (authLoading) return <FullScreenLoading />
   if (!user) return null
 
   // -------- Visão do cliente (sem indicadores operacionais) --------
   if (!isStaff) {
     return (
-      <div className="max-w-6xl mx-auto px-5 pt-5 pb-20">
-        <Topbar />
-        <h2 className="text-xl mb-1">Minhas Mesas</h2>
-        <p className="text-muted text-sm mb-5">Aqui aparecem as mesas em que um atendente te vinculou.</p>
+      <PageShell title="Minhas mesas" subtitle="As mesas em que um atendente te vinculou aparecem aqui.">
         {myTables.length === 0 ? (
-          <div className="text-center text-muted py-10 text-sm">
-            Você ainda não está em nenhuma mesa. Peça pro atendente te vincular quando chegar.
-          </div>
+          <Card>
+            <EmptyState
+              icon={Armchair}
+              title="Você ainda não está em nenhuma mesa"
+              description="Quando chegar, peça para o atendente te vincular à sua mesa."
+            />
+          </Card>
         ) : (
-          <div className="grid gap-3.5" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))' }}>
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {myTables.map(t => (
-              <div key={t.table_id} className="card card-hover p-5">
-                <div className="font-display text-3xl leading-none mb-3">Mesa {t.table_number}</div>
-                <div className="text-[11px] tracking-wide uppercase text-muted mb-1.5">Seus pedidos</div>
-                <p className="text-sm text-paperDim">{t.items_summary || 'Nada lançado ainda.'}</p>
-              </div>
+              <Card key={t.table_id} className="p-5">
+                <div className="mb-3 flex items-center gap-3">
+                  <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-red/15 text-lg font-semibold text-red-bright">
+                    {t.table_number}
+                  </span>
+                  <h2 className="text-lg font-semibold">Mesa {t.table_number}</h2>
+                </div>
+                <p className="mb-1 text-xs font-medium text-mute">Seus pedidos</p>
+                <p className="text-sm text-ink2">{t.items_summary || 'Nada lançado ainda.'}</p>
+              </Card>
             ))}
           </div>
         )}
-      </div>
+      </PageShell>
     )
   }
 
@@ -131,73 +151,88 @@ export default function MesasPage() {
   const consumoAberto = Object.values(totals).reduce((s, v) => s + v, 0)
   const comandasAbertas = Object.keys(openOrders).length
 
-  const hoje = new Date().toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' }).toUpperCase().replace('.', '')
+  const hojeRaw = new Date().toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' })
+  const hoje = hojeRaw.charAt(0).toUpperCase() + hojeRaw.slice(1)
 
-  type AttentionItem = { key: string; emoji: string; tableNumber: number; text: string; tableId: string }
+  type AttentionKind = 'bill' | 'time' | 'value' | 'reserved'
+  type AttentionItem = { key: string; kind: AttentionKind; tableNumber: number; text: string; tableId: string }
   const attentionItems: AttentionItem[] = []
   Object.values(openOrders).forEach(o => {
     const table = tables.find(t => t.id === o.table_id)
     if (!table) return
     if (o.bill_requested) {
-      attentionItems.push({ key: `bill-${o.table_id}`, emoji: '🔴', tableNumber: table.number, text: 'Conta solicitada', tableId: table.id })
+      attentionItems.push({ key: `bill-${o.table_id}`, kind: 'bill', tableNumber: table.number, text: 'Pediu a conta', tableId: table.id })
     }
     const mins = Math.floor((now - new Date(o.opened_at).getTime()) / 60000)
     if (mins >= LONG_TIME_MINUTES) {
-      attentionItems.push({ key: `time-${o.table_id}`, emoji: '🟡', tableNumber: table.number, text: `Ocupada há ${elapsedLabel(o.opened_at)}`, tableId: table.id })
+      attentionItems.push({ key: `time-${o.table_id}`, kind: 'time', tableNumber: table.number, text: `Ocupada há ${elapsedLabel(o.opened_at)}`, tableId: table.id })
     }
     if (o.total >= HIGH_VALUE_THRESHOLD) {
-      attentionItems.push({ key: `value-${o.table_id}`, emoji: '🟡', tableNumber: table.number, text: `${fmtMoney(o.total)} em consumo`, tableId: table.id })
+      attentionItems.push({ key: `value-${o.table_id}`, kind: 'value', tableNumber: table.number, text: `${fmtMoney(o.total)} em consumo`, tableId: table.id })
     }
   })
   tables.filter(t => t.status === 'reservada').forEach(t => {
-    attentionItems.push({ key: `res-${t.id}`, emoji: '🔵', tableNumber: t.number, text: 'Reservada', tableId: t.id })
+    attentionItems.push({ key: `res-${t.id}`, kind: 'reserved', tableNumber: t.number, text: 'Reservada', tableId: t.id })
   })
+  // Conta pedida primeiro: é o que o cliente está esperando
+  const kindOrder: Record<AttentionKind, number> = { bill: 0, time: 1, value: 2, reserved: 3 }
+  attentionItems.sort((a, b) => kindOrder[a.kind] - kindOrder[b.kind])
+
+  const kindStyle: Record<AttentionKind, { icon: typeof BellRing; cls: string }> = {
+    bill: { icon: BellRing, cls: 'bg-info/15 text-info' },
+    time: { icon: Clock, cls: 'bg-warn/15 text-warn' },
+    value: { icon: TrendingUp, cls: 'bg-warn/15 text-warn' },
+    reserved: { icon: CalendarClock, cls: 'bg-warn/15 text-warn' },
+  }
 
   return (
-    <div className="max-w-6xl mx-auto px-5 pt-5 pb-20">
-      <Topbar />
-
-      <div className="flex items-start justify-between mb-5 flex-wrap gap-3">
+    <PageShell
+      title="Mesas"
+      subtitle={hoje}
+      actions={
+        <>
+          <Segmented
+            value={view}
+            onChange={setView}
+            options={[
+              { value: 'mapa', label: 'Mapa', icon: MapIcon },
+              { value: 'grade', label: 'Grade', icon: LayoutGrid },
+            ]}
+          />
+          <Button variant="primary" icon={Plus} onClick={addTable}>
+            Nova mesa
+          </Button>
+        </>
+      }
+    >
+      {/* Resumo do salão */}
+      <Card className="mb-6 grid gap-x-8 gap-y-5 p-5 sm:grid-cols-[auto_1fr] sm:items-center">
         <div>
-          <h2 className="text-2xl m-0 leading-none">MESAS</h2>
-          <p className="text-muted text-sm mt-1">Visão geral do salão</p>
+          <p className="text-xs font-medium text-mute">Consumo em aberto</p>
+          <p className="mt-1 text-3xl font-semibold leading-none text-ink tnum sm:text-4xl">{fmtMoney(consumoAberto)}</p>
+          <p className="mt-2 text-sm text-ink2">
+            {comandasAbertas === 0 ? 'Nenhuma comanda aberta' : `${comandasAbertas} comanda${comandasAbertas > 1 ? 's' : ''} aberta${comandasAbertas > 1 ? 's' : ''}`}
+          </p>
         </div>
-        <div className="flex items-center gap-3">
-          <span className="text-muted text-xs tracking-wide">Hoje • {hoje}</span>
-          <div className="flex gap-1.5 bg-bgElevated border border-line rounded-lg p-1">
-            <button onClick={() => setView('mapa')} className={`btn btn-sm ${view === 'mapa' ? 'btn-solid' : 'btn-ghost'}`}>Mapa</button>
-            <button onClick={() => setView('grade')} className={`btn btn-sm ${view === 'grade' ? 'btn-solid' : 'btn-ghost'}`}>Grade</button>
-          </div>
-        </div>
-      </div>
+        <dl className="grid grid-cols-3 gap-3 sm:justify-self-end sm:border-l sm:border-line sm:pl-8">
+          {[
+            { label: 'Livres', value: livres, dot: 'bg-ok' },
+            { label: 'Ocupadas', value: ocupadas, dot: 'bg-red-bright' },
+            { label: 'Reservadas', value: reservadas, dot: 'bg-warn' },
+          ].map(i => (
+            <div key={i.label} className="min-w-0 sm:min-w-[84px]">
+              <dd className="text-2xl font-semibold leading-none text-ink tnum">{i.value}</dd>
+              <dt className="mt-2 flex items-center gap-1.5 text-xs text-ink2">
+                <span className={cn('h-2 w-2 shrink-0 rounded-full', i.dot)} aria-hidden />
+                <span className="truncate">{i.label}</span>
+              </dt>
+            </div>
+          ))}
+        </dl>
+      </Card>
 
-      {/* Indicadores */}
-      <div className="grid gap-3 mb-5" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))' }}>
-        <div className="card p-3.5 text-center">
-          <div className="font-display text-2xl text-green-400">{String(livres).padStart(2, '0')}</div>
-          <div className="text-[10px] uppercase tracking-wide text-muted mt-0.5">Livres</div>
-        </div>
-        <div className="card p-3.5 text-center">
-          <div className="font-display text-2xl text-red-bright">{String(ocupadas).padStart(2, '0')}</div>
-          <div className="text-[10px] uppercase tracking-wide text-muted mt-0.5">Ocupadas</div>
-        </div>
-        <div className="card p-3.5 text-center">
-          <div className="font-display text-2xl text-amber-400">{String(reservadas).padStart(2, '0')}</div>
-          <div className="text-[10px] uppercase tracking-wide text-muted mt-0.5">Reservadas</div>
-        </div>
-        <div className="card p-3.5 text-center">
-          <div className="font-display text-xl text-paper">{fmtMoney(consumoAberto)}</div>
-          <div className="text-[10px] uppercase tracking-wide text-muted mt-0.5">Consumo Aberto</div>
-        </div>
-        <div className="card p-3.5 text-center">
-          <div className="font-display text-2xl text-paper">{String(comandasAbertas).padStart(2, '0')}</div>
-          <div className="text-[10px] uppercase tracking-wide text-muted mt-0.5">Comandas Abertas</div>
-        </div>
-      </div>
-
-      {/* Mapa/Grade + Atenção lado a lado */}
-      <div className="grid gap-5" style={{ gridTemplateColumns: 'minmax(0, 1fr) 280px' }}>
-        <div>
+      <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_300px]">
+        <div className="min-w-0">
           {view === 'mapa' ? (
             <>
               <FloorMap
@@ -208,59 +243,124 @@ export default function MesasPage() {
                 onOpenTable={setOpenTable}
                 onPositionChange={updateTablePosition}
               />
-              <div className="flex flex-wrap gap-x-5 gap-y-1.5 mt-3 text-xs text-muted">
-                <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-green-400 inline-block" /> Livre</span>
-                <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-red-bright inline-block" /> Ocupada</span>
-                <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-amber-400 inline-block" /> Reservada</span>
-                <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-blue-400 inline-block" /> Atenção</span>
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-x-6 gap-y-2 text-xs text-ink2">
+                <ul className="flex flex-wrap gap-x-4 gap-y-1.5">
+                  {[
+                    { l: 'Livre', c: 'bg-ok' },
+                    { l: 'Ocupada', c: 'bg-red-bright' },
+                    { l: 'Reservada', c: 'bg-warn' },
+                    { l: 'Pediu a conta', c: 'bg-info' },
+                  ].map(i => (
+                    <li key={i.l} className="flex items-center gap-1.5">
+                      <span className={cn('h-2.5 w-2.5 rounded-full', i.c)} aria-hidden /> {i.l}
+                    </li>
+                  ))}
+                </ul>
+                <p className="flex items-center gap-1.5 text-mute">
+                  <Hand className="h-3.5 w-3.5" aria-hidden />
+                  Toque para abrir. Segure e arraste para mover.
+                </p>
               </div>
-              <p className="text-muted text-xs mt-3">
-                Segura e arrasta uma mesa pra reposicionar ela no croqui. Um toque rápido abre o pedido.
-              </p>
-              <button onClick={addTable} className="btn btn-outline btn-sm mt-3">+ Adicionar mesa</button>
             </>
           ) : (
-            <div className="grid gap-3.5" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))' }}>
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4">
               {tables.map(t => {
                 const attention = t.status === 'ocupada' && openOrders[t.id]?.bill_requested
-                const statusColor = attention ? 'border-blue-400' : t.status === 'ocupada' ? 'border-red-dark' : t.status === 'reservada' ? 'border-amber-500' : 'border-line hover:border-red'
+                const open = openOrders[t.id]
+                const ring = attention
+                  ? 'border-info/50'
+                  : t.status === 'ocupada'
+                  ? 'border-red/40'
+                  : t.status === 'reservada'
+                  ? 'border-warn/40'
+                  : 'border-line hover:border-lineStrong'
                 return (
-                  <div key={t.id} onClick={() => setOpenTable(t)}
-                    className={`card card-hover p-4 cursor-pointer min-h-[110px] flex flex-col justify-between ${statusColor}`}>
-                    <div>
-                      <div className="font-display text-2xl leading-none">Mesa {t.number}</div>
-                      <div className={`text-[10px] tracking-wide uppercase font-bold mt-1.5 ${attention ? 'text-blue-300' : t.status === 'livre' ? 'text-green-400' : t.status === 'reservada' ? 'text-amber-400' : 'text-red-bright'}`}>
-                        ● {attention ? 'Atenção' : t.status === 'livre' ? 'Livre' : t.status === 'reservada' ? 'Reservada' : 'Ocupada'}
-                      </div>
+                  <button
+                    key={t.id}
+                    type="button"
+                    onClick={() => setOpenTable(t)}
+                    className={cn(
+                      'flex min-h-[116px] flex-col justify-between rounded-2xl border bg-surface p-4 text-left transition-colors hover:bg-raised',
+                      ring,
+                    )}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <span className="text-2xl font-semibold leading-none text-ink tnum">{t.number}</span>
+                      {attention ? (
+                        <Badge tone="blue" icon={BellRing}>Conta</Badge>
+                      ) : t.status === 'ocupada' ? (
+                        <Badge tone="red">Ocupada</Badge>
+                      ) : t.status === 'reservada' ? (
+                        <Badge tone="amber">Reservada</Badge>
+                      ) : (
+                        <Badge tone="green">Livre</Badge>
+                      )}
                     </div>
-                    {t.status === 'ocupada' && <div className="font-display text-sm mt-2">{fmtMoney(totals[t.id] || 0)}</div>}
-                  </div>
+                    {t.status === 'ocupada' ? (
+                      <div>
+                        <p className="text-lg font-semibold text-ink tnum">{fmtMoney(totals[t.id] || 0)}</p>
+                        {open && (
+                          <p className="mt-0.5 flex items-center gap-1 text-xs text-mute">
+                            <Clock className="h-3 w-3" aria-hidden /> {elapsedLabel(open.opened_at)}
+                          </p>
+                        )}
+                      </div>
+                    ) : (
+                      <p className="text-xs text-mute">Mesa {t.number}</p>
+                    )}
+                  </button>
                 )
               })}
-              <div onClick={addTable} className="border border-dashed border-line rounded-xl min-h-[110px] flex items-center justify-center cursor-pointer text-muted text-3xl hover:border-red hover:text-red transition-colors">+</div>
+              <button
+                type="button"
+                onClick={addTable}
+                className="flex min-h-[116px] flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-lineStrong text-sm text-mute transition-colors hover:border-red/60 hover:text-ink"
+              >
+                <Plus className="h-5 w-5" aria-hidden />
+                Nova mesa
+              </button>
             </div>
           )}
         </div>
 
-        {/* Painel de Atenção */}
-        <aside className="card p-4 h-fit">
-          <div className="font-display text-sm tracking-wide uppercase mb-3 text-paper">⚠ Atenção</div>
-          {attentionItems.length === 0 ? (
-            <p className="text-muted text-xs">Nada precisando de atenção agora.</p>
-          ) : (
-            <div className="space-y-2.5">
-              {attentionItems.map(a => (
-                <button
-                  key={a.key}
-                  onClick={() => { const t = tables.find(x => x.id === a.tableId); if (t) setOpenTable(t) }}
-                  className="block w-full text-left bg-bgElevated hover:bg-bgCard border border-line rounded-lg px-3 py-2 transition-colors"
-                >
-                  <div className="text-sm">{a.emoji} Mesa {a.tableNumber}</div>
-                  <div className="text-muted text-xs mt-0.5">{a.text}</div>
-                </button>
-              ))}
+        {/* Precisa de atenção */}
+        <aside aria-label="Precisa de atenção" className="h-fit">
+          <Card className="p-4">
+            <div className="mb-3 flex items-center justify-between gap-2">
+              <h2 className="text-sm font-semibold text-ink">Precisa de atenção</h2>
+              {attentionItems.length > 0 && <Badge tone="red">{attentionItems.length}</Badge>}
             </div>
-          )}
+            {attentionItems.length === 0 ? (
+              <div className="flex items-center gap-2.5 rounded-xl bg-raised px-3 py-3 text-sm text-ink2">
+                <CheckCircle2 className="h-4 w-4 shrink-0 text-ok" aria-hidden />
+                Tudo tranquilo no salão.
+              </div>
+            ) : (
+              <ul className="space-y-2">
+                {attentionItems.map(a => {
+                  const k = kindStyle[a.kind]
+                  const Icon = k.icon
+                  return (
+                    <li key={a.key}>
+                      <button
+                        type="button"
+                        onClick={() => { const t = tables.find(x => x.id === a.tableId); if (t) setOpenTable(t) }}
+                        className="flex w-full items-center gap-3 rounded-xl border border-line bg-bg px-3 py-2.5 text-left transition-colors hover:border-lineStrong hover:bg-raised"
+                      >
+                        <span className={cn('flex h-8 w-8 shrink-0 items-center justify-center rounded-lg', k.cls)}>
+                          <Icon className="h-4 w-4" aria-hidden />
+                        </span>
+                        <span className="min-w-0">
+                          <span className="block truncate text-sm font-medium text-ink">Mesa {a.tableNumber}</span>
+                          <span className="block truncate text-xs text-mute">{a.text}</span>
+                        </span>
+                      </button>
+                    </li>
+                  )
+                })}
+              </ul>
+            )}
+          </Card>
         </aside>
       </div>
 
@@ -272,6 +372,6 @@ export default function MesasPage() {
           onChanged={load}
         />
       )}
-    </div>
+    </PageShell>
   )
 }

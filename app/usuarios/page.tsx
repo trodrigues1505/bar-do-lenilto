@@ -2,9 +2,11 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
+import { ShieldCheck, Users } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/app/providers'
-import Topbar from '@/components/Topbar'
+import PageShell, { FullScreenLoading } from '@/components/PageShell'
+import { Avatar, Badge, Card, EmptyState, LoadingBlock, Select, useUI } from '@/components/ui'
 
 type Profile = {
   id: string
@@ -14,16 +16,11 @@ type Profile = {
   created_at: string
 }
 
-const ROLE_LABEL: Record<string, string> = {
-  admin: 'Admin',
-  funcionario: 'Funcionário',
-  cliente: 'Cliente',
-}
-
 export default function UsuariosPage() {
   const { user, isAdmin, loading: authLoading } = useAuth()
   const router = useRouter()
   const supabase = createClient()
+  const { toast, confirm } = useUI()
   const [profiles, setProfiles] = useState<Profile[]>([])
   const [loadingList, setLoadingList] = useState(true)
   const [savingId, setSavingId] = useState<string | null>(null)
@@ -49,68 +46,81 @@ export default function UsuariosPage() {
 
   const changeRole = async (profile: Profile, newRole: string) => {
     if (profile.id === user?.id && newRole !== 'admin') {
-      if (!confirm('Você está tirando o seu próprio acesso de admin. Tem certeza?')) return
+      const ok = await confirm({
+        title: 'Remover o seu próprio acesso de admin?',
+        message: 'Depois disso você não vai conseguir abrir esta tela de novo, a menos que outro admin te promova.',
+        confirmLabel: 'Remover meu acesso',
+        tone: 'danger',
+      })
+      if (!ok) return
     }
     setSavingId(profile.id)
-    await supabase.from('profiles').update({ role: newRole }).eq('id', profile.id)
+    const { error } = await supabase.from('profiles').update({ role: newRole }).eq('id', profile.id)
+    if (error) toast.error('Não foi possível alterar o papel: ' + error.message)
+    else toast.success('Papel atualizado.')
     await load()
     setSavingId(null)
   }
 
-  if (authLoading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center text-muted text-sm">
-        Carregando...
-      </div>
-    )
-  }
+  if (authLoading) return <FullScreenLoading />
   if (!user || !isAdmin) return null
 
-  return (
-    <div className="max-w-6xl mx-auto px-5 pt-5 pb-20">
-      <Topbar />
-      <h2 className="text-xl mb-4">Usuários ({profiles.length})</h2>
-      <p className="text-muted text-sm mb-5">
-        Só aparece aqui quem já fez login pelo menos uma vez no app. Clientes entram
-        automaticamente com esse papel — promova pra Funcionário ou Admin quando precisar.
-      </p>
+  const counts = {
+    admin: profiles.filter(p => p.role === 'admin').length,
+    funcionario: profiles.filter(p => p.role === 'funcionario').length,
+    cliente: profiles.filter(p => p.role === 'cliente').length,
+  }
 
+  return (
+    <PageShell
+      title="Usuários"
+      subtitle="Aparece aqui quem já entrou no app ao menos uma vez. Novos usuários entram como cliente."
+    >
       {loadingList ? (
-        <div className="text-center text-muted py-8 text-sm">Carregando...</div>
+        <LoadingBlock />
+      ) : profiles.length === 0 ? (
+        <Card>
+          <EmptyState icon={Users} title="Nenhum usuário ainda" description="Quando alguém entrar com o Google, aparece nesta lista." />
+        </Card>
       ) : (
-        <table className="w-full border-collapse">
-          <thead>
-            <tr>
-              <th className="text-left text-[11px] tracking-wide uppercase text-muted px-2.5 py-2 border-b border-line">Nome</th>
-              <th className="text-left text-[11px] tracking-wide uppercase text-muted px-2.5 py-2 border-b border-line">E-mail</th>
-              <th className="text-left text-[11px] tracking-wide uppercase text-muted px-2.5 py-2 border-b border-line">Papel</th>
-            </tr>
-          </thead>
-          <tbody>
+        <>
+          <div className="mb-5 flex flex-wrap gap-2">
+            <Badge tone="red" icon={ShieldCheck}>{counts.admin} admin{counts.admin !== 1 ? 's' : ''}</Badge>
+            <Badge tone="blue">{counts.funcionario} funcionário{counts.funcionario !== 1 ? 's' : ''}</Badge>
+            <Badge>{counts.cliente} cliente{counts.cliente !== 1 ? 's' : ''}</Badge>
+          </div>
+
+          <ul className="divide-y divide-line overflow-hidden rounded-2xl border border-line bg-surface">
             {profiles.map(p => (
-              <tr key={p.id}>
-                <td className="px-2.5 py-2.5 border-b border-line">
-                  {p.full_name || '—'}
-                  {p.id === user?.id && <span className="text-muted text-xs ml-2">(você)</span>}
-                </td>
-                <td className="px-2.5 py-2.5 border-b border-line text-paperDim">{p.email}</td>
-                <td className="px-2.5 py-2.5 border-b border-line">
-                  <select
+              <li key={p.id} className="flex flex-wrap items-center gap-x-4 gap-y-3 px-4 py-3.5">
+                <div className="flex min-w-0 flex-1 basis-56 items-center gap-3">
+                  <Avatar name={p.full_name || p.email} size="lg" />
+                  <div className="min-w-0">
+                    <p className="truncate text-[15px] font-medium text-ink">
+                      {p.full_name || 'Sem nome'}
+                      {p.id === user?.id && <span className="ml-2 text-xs font-normal text-mute">(você)</span>}
+                    </p>
+                    <p className="truncate text-sm text-mute">{p.email}</p>
+                  </div>
+                </div>
+                <div className="w-full sm:w-44">
+                  <Select
+                    aria-label={`Papel de ${p.full_name || p.email}`}
                     value={p.role}
                     disabled={savingId === p.id}
-                    onChange={(e) => changeRole(p, e.target.value)}
-                    className="bg-bgElevated border border-line rounded-lg px-3 py-1.5 text-sm"
+                    onChange={e => changeRole(p, e.target.value)}
+                    className="h-10"
                   >
                     <option value="cliente">Cliente</option>
                     <option value="funcionario">Funcionário</option>
                     <option value="admin">Admin</option>
-                  </select>
-                </td>
-              </tr>
+                  </Select>
+                </div>
+              </li>
             ))}
-          </tbody>
-        </table>
+          </ul>
+        </>
       )}
-    </div>
+    </PageShell>
   )
 }

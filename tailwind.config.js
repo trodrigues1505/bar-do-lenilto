@@ -1,4 +1,6 @@
 /** @type {import('tailwindcss').Config} */
+const c = (name) => `rgb(var(--${name}) / <alpha-value>)`
+
 module.exports = {
   content: [
     './app/**/*.{js,ts,jsx,tsx}',
@@ -7,22 +9,62 @@ module.exports = {
   theme: {
     extend: {
       colors: {
-        bg: '#0c0909',
-        bgElevated: '#171111',
-        bgCard: '#1c1515',
+        // Superfícies (do mais fundo para o mais elevado)
+        bg: c('bg'),
+        surface: c('surface'),
+        raised: c('raised'),
+        hover: c('hover'),
+        // Bordas
+        line: c('line'),
+        lineStrong: c('line-strong'),
+        // Texto
+        ink: c('ink'),
+        ink2: c('ink-2'),
+        mute: c('mute'),
+        // Marca e estados
         red: {
-          DEFAULT: '#c81d25',
-          bright: '#e8323a',
-          dark: '#6e0f14',
+          DEFAULT: c('red'),
+          bright: c('red-bright'),
+          dark: c('red-dark'),
         },
-        paper: '#f2ece2',
-        paperDim: '#cfc3b4',
-        muted: '#8a7a78',
-        line: '#2c2020',
+        ok: c('ok'),
+        warn: c('warn'),
+        info: c('info'),
+        // Aliases antigos (evitam quebrar classes legadas)
+        bgElevated: c('surface'),
+        bgCard: c('raised'),
+        paper: c('ink'),
+        paperDim: c('ink-2'),
+        muted: c('mute'),
       },
       fontFamily: {
-        display: ['Anton', 'sans-serif'],
-        body: ['Oswald', 'sans-serif'],
+        sans: ['Inter', 'system-ui', '-apple-system', 'Segoe UI', 'Roboto', 'sans-serif'],
+        // Anton fica reservada ao nome do bar (marca). O resto da interface é Inter.
+        display: ['Anton', 'Impact', 'sans-serif'],
+      },
+      borderRadius: {
+        xl: '14px',
+        '2xl': '18px',
+        '3xl': '24px',
+      },
+      keyframes: {
+        'sheet-in': {
+          '0%': { opacity: '0', transform: 'translateY(24px)' },
+          '100%': { opacity: '1', transform: 'translateY(0)' },
+        },
+        'pop-in': {
+          '0%': { opacity: '0', transform: 'scale(0.96) translateY(8px)' },
+          '100%': { opacity: '1', transform: 'scale(1) translateY(0)' },
+        },
+        'fade-in': {
+          '0%': { opacity: '0' },
+          '100%': { opacity: '1' },
+        },
+      },
+      animation: {
+        'sheet-in': 'sheet-in 0.22s cubic-bezier(0.2, 0.8, 0.2, 1)',
+        'pop-in': 'pop-in 0.18s cubic-bezier(0.2, 0.8, 0.2, 1)',
+        'fade-in': 'fade-in 0.15s ease-out',
       },
     },
   },

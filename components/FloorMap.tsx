@@ -3,6 +3,8 @@
 import { useRef, useState } from 'react'
 import { withBasePath } from '@/lib/basePath'
 import { useCountUp } from '@/hooks/useCountUp'
+import { BellRing, CalendarClock } from 'lucide-react'
+import { cn, fmtMoney } from '@/components/ui'
 
 type TableStatus = 'livre' | 'ocupada' | 'reservada'
 type TableRow = {
@@ -12,8 +14,6 @@ type TableRow = {
   pos_x: number | null
   pos_y: number | null
 }
-
-const fmt = (n: number) => 'R$ ' + n.toFixed(2).replace('.', ',')
 
 export default function FloorMap({
   tables,
@@ -72,8 +72,8 @@ export default function FloorMap({
   return (
     <div
       ref={containerRef}
-      className="relative w-full border border-line rounded-2xl select-none"
-      style={{ aspectRatio: '1919 / 820', touchAction: canDrag ? 'none' : 'auto' }}
+      className="relative w-full select-none rounded-2xl border border-line bg-surface"
+      style={{ aspectRatio: '1919 / 820', touchAction: canDrag ? 'none' : 'auto', containerType: 'inline-size' }}
     >
       <div className="absolute inset-0 rounded-2xl overflow-hidden pointer-events-none">
         <img
@@ -100,6 +100,7 @@ export default function FloorMap({
             total={total}
             attention={attention}
             canDrag={canDrag}
+            onActivate={() => onOpenTable(table)}
             onPointerDown={(e) => handlePointerDown(e, table)}
             onPointerMove={(e) => handlePointerMove(e, table)}
             onPointerUp={(e) => handlePointerUp(e, table)}
@@ -111,7 +112,7 @@ export default function FloorMap({
 }
 
 function TableMarker({
-  table, x, y, index, isDragging, total, attention, canDrag,
+  table, x, y, index, isDragging, total, attention, canDrag, onActivate,
   onPointerDown, onPointerMove, onPointerUp,
 }: {
   table: TableRow
@@ -122,6 +123,7 @@ function TableMarker({
   total: number
   attention: boolean
   canDrag: boolean
+  onActivate: () => void
   onPointerDown: (e: React.PointerEvent) => void
   onPointerMove: (e: React.PointerEvent) => void
   onPointerUp: (e: React.PointerEvent) => void
@@ -138,12 +140,29 @@ function TableMarker({
 
   const pulseClass = attention ? 'table-pulse-blue' : table.status === 'ocupada' ? 'table-pulse' : ''
 
+  const statusLabel = attention
+    ? 'conta solicitada'
+    : table.status === 'ocupada'
+    ? 'ocupada'
+    : table.status === 'reservada'
+    ? 'reservada'
+    : 'livre'
+
   return (
     <div
+      role="button"
+      tabIndex={0}
+      aria-label={`Mesa ${table.number}, ${statusLabel}`}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault()
+          onActivate()
+        }
+      }}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
-      className="table-marker-enter absolute flex flex-col items-center"
+      className="table-marker-enter absolute flex flex-col items-center rounded-2xl focus-visible:outline-offset-4"
       style={{
         left: `${x}%`,
         top: `${y}%`,
@@ -160,18 +179,36 @@ function TableMarker({
           filter: isDragging ? 'drop-shadow(0 12px 20px rgba(0,0,0,.6))' : 'drop-shadow(0 4px 10px rgba(0,0,0,.4))',
         }}
       >
-        <img src={withBasePath(icon)} alt="" className="w-[64px] h-[64px] md:w-[76px] md:h-[76px] pointer-events-none" draggable={false} />
-        <div className="absolute inset-0 flex items-center justify-center font-display text-lg md:text-xl text-paper pointer-events-none">
+        {/* Tamanho proporcional à largura do mapa: no celular os ícones encolhem em vez de se sobrepor */}
+        <img
+          src={withBasePath(icon)}
+          alt=""
+          className="pointer-events-none"
+          style={{ width: 'clamp(34px, 8cqw, 76px)', height: 'clamp(34px, 8cqw, 76px)' }}
+          draggable={false}
+        />
+        <div
+          className="pointer-events-none absolute inset-0 flex items-center justify-center font-bold text-white [text-shadow:0_1px_3px_rgba(0,0,0,.7)]"
+          style={{ fontSize: 'clamp(13px, 2.6cqw, 20px)' }}
+        >
           {table.number}
         </div>
       </div>
+
       {table.status === 'ocupada' && (
-        <div className={`mt-1 bg-bgElevated border rounded-full px-2.5 py-0.5 text-[11px] font-display shadow-lg whitespace-nowrap pointer-events-none ${attention ? 'border-blue-400 text-blue-300' : 'border-red-dark text-red-bright'}`}>
-          {fmt(animatedTotal)}
+        <div
+          className={cn(
+            'pointer-events-none mt-0.5 flex items-center gap-1 whitespace-nowrap rounded-full border bg-bg/90 px-1.5 py-px text-[10px] font-semibold tabular-nums shadow-lg backdrop-blur-sm sm:mt-1 sm:px-2 sm:py-0.5 sm:text-[11px]',
+            attention ? 'border-info/60 text-info' : 'border-red/50 text-red-bright',
+          )}
+        >
+          {attention && <BellRing className="h-3 w-3" aria-hidden />}
+          {fmtMoney(animatedTotal)}
         </div>
       )}
       {table.status === 'reservada' && (
-        <div className="mt-1 bg-bgElevated border border-amber-500 rounded-full px-2.5 py-0.5 text-[10px] font-display text-amber-400 shadow-lg whitespace-nowrap pointer-events-none uppercase tracking-wide">
+        <div className="pointer-events-none mt-0.5 flex items-center gap-1 whitespace-nowrap rounded-full border border-warn/50 bg-bg/90 px-1.5 py-px text-[10px] font-semibold text-warn shadow-lg backdrop-blur-sm sm:mt-1 sm:px-2 sm:py-0.5 sm:text-[11px]">
+          <CalendarClock className="h-3 w-3" aria-hidden />
           Reservada
         </div>
       )}

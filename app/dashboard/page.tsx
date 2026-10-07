@@ -2,16 +2,30 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
+import { CheckCircle2, Receipt, Users, Wallet } from 'lucide-react'
+import type { LucideIcon } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/app/providers'
-import Topbar from '@/components/Topbar'
+import PageShell, { FullScreenLoading } from '@/components/PageShell'
+import { Card, EmptyState, Field, LoadingBlock, ProgressBar, Select, cn, fmtMoney as fmt } from '@/components/ui'
 
 type ItemRow = { product_name: string; qty: number; unit_price: number; customer_id: string | null; order_id: string; created_at: string }
 type OrderRow = { id: string; status: string; total: number; opened_at: string; closed_at: string | null }
 type ClientProfile = { id: string; full_name: string | null; email: string | null }
 
-const fmt = (n: number) => 'R$ ' + n.toFixed(2).replace('.', ',')
 const WEEKDAYS = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado']
+
+function Kpi({ icon: Icon, label, value, big }: { icon: LucideIcon; label: string; value: string; big?: boolean }) {
+  return (
+    <div className="min-w-0 p-4 sm:p-5">
+      <p className="flex items-center gap-2 text-xs text-ink2">
+        <Icon className="h-3.5 w-3.5 shrink-0 text-mute" aria-hidden />
+        <span className="truncate">{label}</span>
+      </p>
+      <p className={cn('mt-2 truncate font-semibold text-ink tnum', big ? 'text-3xl text-red-bright' : 'text-2xl')}>{value}</p>
+    </div>
+  )
+}
 
 export default function DashboardPage() {
   const { user, isAdmin, isStaff, loading: authLoading } = useAuth()
@@ -78,6 +92,8 @@ export default function DashboardPage() {
   const maxHourCount = Math.max(1, ...byHour.map(h => h.count))
   const maxWeekdayCount = Math.max(1, ...byWeekday.map(w => w.count))
   const maxProductCount = Math.max(1, ...topProducts.map(p => p[1]))
+  const peakHour = byHour.reduce((best, h) => (h.count > best.count ? h : best), byHour[0])
+  const peakWeekday = byWeekday.reduce((best, w) => (w.count > best.count ? w : best), byWeekday[0])
 
   const clientStats = useMemo(() => {
     if (!selectedClient) return null
@@ -94,131 +110,126 @@ export default function DashboardPage() {
     return { favProduct, total, visits, favHour }
   }, [items, selectedClient])
 
-  if (authLoading) {
-    return <div className="min-h-screen flex items-center justify-center text-muted text-sm">Carregando...</div>
-  }
+  if (authLoading) return <FullScreenLoading />
   if (!user || !isAdmin) return null
 
   return (
-    <div className="max-w-6xl mx-auto px-5 pt-5 pb-20">
-      <Topbar />
-      <h2 className="text-xl mb-1">Dashboard 📊</h2>
-      <p className="text-muted text-sm mb-6">
-        Dados de apoio pra decisão — baseado no histórico de pedidos (até os últimos 3000 itens).
-      </p>
-
+    <PageShell
+      title="Dashboard"
+      subtitle="Baseado no histórico de pedidos, até os últimos 3.000 itens lançados."
+    >
       {loadingData ? (
-        <div className="text-center text-muted py-8 text-sm">Carregando...</div>
+        <LoadingBlock />
       ) : (
-        <>
-          <div className="grid gap-3.5 mb-6" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))' }}>
-            <div className="card p-4">
-              <div className="text-[11px] uppercase tracking-wide text-muted mb-1">Faturamento (fechados)</div>
-              <div className="font-display text-2xl text-red-bright">{fmt(faturamentoTotal)}</div>
-            </div>
-            <div className="card p-4">
-              <div className="text-[11px] uppercase tracking-wide text-muted mb-1">Ticket médio</div>
-              <div className="font-display text-2xl">{fmt(ticketMedio)}</div>
-            </div>
-            <div className="card p-4">
-              <div className="text-[11px] uppercase tracking-wide text-muted mb-1">Pedidos fechados</div>
-              <div className="font-display text-2xl">{closedOrders.length}</div>
-            </div>
-            <div className="card p-4">
-              <div className="text-[11px] uppercase tracking-wide text-muted mb-1">Clientes cadastrados</div>
-              <div className="font-display text-2xl">{clients.length}</div>
-            </div>
-          </div>
+        <div className="space-y-5">
+          <Card className="grid grid-cols-2 divide-x divide-y divide-line overflow-hidden lg:grid-cols-4 lg:divide-y-0">
+            <Kpi icon={Wallet} label="Faturamento (fechados)" value={fmt(faturamentoTotal)} big />
+            <Kpi icon={Receipt} label="Ticket médio" value={fmt(ticketMedio)} />
+            <Kpi icon={CheckCircle2} label="Pedidos fechados" value={String(closedOrders.length)} />
+            <Kpi icon={Users} label="Clientes cadastrados" value={String(clients.length)} />
+          </Card>
 
-          <div className="grid gap-5 mb-6" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))' }}>
-            <div className="card p-4">
-              <div className="text-sm font-display mb-3">Produtos mais pedidos</div>
-              {topProducts.length === 0 ? <div className="text-muted text-sm">Sem dados ainda.</div> : (
-                <div className="space-y-2">
+          <div className="grid gap-5 lg:grid-cols-2">
+            <Card className="p-5">
+              <h2 className="mb-4 text-sm font-semibold text-ink">Produtos mais pedidos</h2>
+              {topProducts.length === 0 ? (
+                <p className="text-sm text-mute">Sem dados ainda.</p>
+              ) : (
+                <ul className="space-y-3.5">
                   {topProducts.map(([name, count]) => (
-                    <div key={name}>
-                      <div className="flex justify-between text-xs mb-1">
-                        <span>{name}</span><span className="text-muted">{count}x</span>
+                    <li key={name}>
+                      <div className="mb-1.5 flex items-baseline justify-between gap-3 text-sm">
+                        <span className="min-w-0 truncate text-ink">{name}</span>
+                        <span className="shrink-0 text-xs text-mute tnum">{count}×</span>
                       </div>
-                      <div className="w-full h-2 bg-bgElevated rounded-full overflow-hidden">
-                        <div className="h-full bg-red transition-all duration-500" style={{ width: `${(count / maxProductCount) * 100}%` }} />
-                      </div>
-                    </div>
+                      <ProgressBar value={(count / maxProductCount) * 100} />
+                    </li>
                   ))}
-                </div>
+                </ul>
               )}
-            </div>
+            </Card>
 
-            <div className="card p-4">
-              <div className="text-sm font-display mb-3">Dia da semana mais movimentado</div>
-              <div className="space-y-2">
-                {byWeekday.map(w => (
-                  <div key={w.label}>
-                    <div className="flex justify-between text-xs mb-1">
-                      <span>{w.label}</span><span className="text-muted">{w.count} pedidos</span>
-                    </div>
-                    <div className="w-full h-2 bg-bgElevated rounded-full overflow-hidden">
-                      <div className="h-full bg-red transition-all duration-500" style={{ width: `${(w.count / maxWeekdayCount) * 100}%` }} />
-                    </div>
-                  </div>
-                ))}
+            <Card className="p-5">
+              <div className="mb-4 flex items-baseline justify-between gap-3">
+                <h2 className="text-sm font-semibold text-ink">Movimento por dia da semana</h2>
+                {peakWeekday.count > 0 && <span className="shrink-0 text-xs text-mute">Pico: {peakWeekday.label}</span>}
               </div>
-            </div>
+              <ul className="space-y-3.5">
+                {byWeekday.map(w => (
+                  <li key={w.label}>
+                    <div className="mb-1.5 flex items-baseline justify-between gap-3 text-sm">
+                      <span className="text-ink">{w.label}</span>
+                      <span className="text-xs text-mute tnum">{w.count} pedido{w.count === 1 ? '' : 's'}</span>
+                    </div>
+                    <ProgressBar value={(w.count / maxWeekdayCount) * 100} tone={w.label === peakWeekday.label && w.count > 0 ? 'red' : 'soft'} />
+                  </li>
+                ))}
+              </ul>
+            </Card>
           </div>
 
-          <div className="card p-4 mb-6">
-            <div className="text-sm font-display mb-3">Horário de pico (itens lançados por hora)</div>
-            <div className="flex items-end gap-1 h-28">
+          <Card className="p-5">
+            <div className="mb-5 flex items-baseline justify-between gap-3">
+              <h2 className="text-sm font-semibold text-ink">Horário de pico</h2>
+              {peakHour.count > 0 && <span className="shrink-0 text-xs text-mute">Mais movimento às {peakHour.h}h</span>}
+            </div>
+            <div className="flex h-32 items-end gap-1" role="img" aria-label="Itens lançados por hora do dia">
               {byHour.map(h => (
-                <div key={h.h} className="flex-1 flex flex-col items-center justify-end h-full">
-                  <div className="w-full bg-red rounded-t transition-all duration-500" style={{ height: `${(h.count / maxHourCount) * 100}%`, minHeight: h.count > 0 ? '3px' : '0' }} />
-                  {h.h % 3 === 0 && <span className="text-[9px] text-muted mt-1">{h.h}h</span>}
+                <div key={h.h} className="flex h-full min-w-0 flex-1 flex-col items-center justify-end" title={`${h.h}h: ${h.count} itens`}>
+                  <div
+                    className={cn('w-full rounded-t transition-[height] duration-500', h.h === peakHour.h && h.count > 0 ? 'bg-red' : 'bg-red/40')}
+                    style={{ height: `${(h.count / maxHourCount) * 100}%`, minHeight: h.count > 0 ? '3px' : '0' }}
+                  />
                 </div>
               ))}
             </div>
-          </div>
+            <div className="mt-2 flex gap-1" aria-hidden>
+              {byHour.map(h => (
+                <span key={h.h} className="min-w-0 flex-1 text-center text-[10px] text-mute">
+                  {h.h % 6 === 0 ? `${h.h}h` : ''}
+                </span>
+              ))}
+            </div>
+          </Card>
 
-          <div className="card p-4">
-            <div className="text-sm font-display mb-3">Preferências por cliente</div>
-            <select value={selectedClient} onChange={e => setSelectedClient(e.target.value)} className="field-input w-full max-w-sm mb-4">
-              <option value="">Escolha um cliente...</option>
-              {clients.map(c => <option key={c.id} value={c.id}>{c.full_name || c.email}</option>)}
-            </select>
+          <Card className="p-5">
+            <h2 className="mb-4 text-sm font-semibold text-ink">Preferências por cliente</h2>
+            <div className="max-w-sm">
+              <Field label="Cliente">
+                <Select value={selectedClient} onChange={e => setSelectedClient(e.target.value)}>
+                  <option value="">Escolha um cliente…</option>
+                  {clients.map(c => <option key={c.id} value={c.id}>{c.full_name || c.email}</option>)}
+                </Select>
+              </Field>
+            </div>
 
             {selectedClient && clientStats && (
               clientStats.favProduct ? (
-                <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))' }}>
-                  <div className="bg-bgElevated rounded-lg p-3">
-                    <div className="text-[10px] uppercase tracking-wide text-muted mb-1">Produto favorito</div>
-                    <div className="font-display text-red-bright">{clientStats.favProduct[0]} ({clientStats.favProduct[1]}x)</div>
-                  </div>
-                  <div className="bg-bgElevated rounded-lg p-3">
-                    <div className="text-[10px] uppercase tracking-wide text-muted mb-1">Total consumido</div>
-                    <div className="font-display">{fmt(clientStats.total)}</div>
-                  </div>
-                  <div className="bg-bgElevated rounded-lg p-3">
-                    <div className="text-[10px] uppercase tracking-wide text-muted mb-1">Visitas (mesas distintas)</div>
-                    <div className="font-display">{clientStats.visits}</div>
-                  </div>
-                  {clientStats.favHour && (
-                    <div className="bg-bgElevated rounded-lg p-3">
-                      <div className="text-[10px] uppercase tracking-wide text-muted mb-1">Horário preferido</div>
-                      <div className="font-display">{clientStats.favHour[0]}h</div>
+                <dl className="mt-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
+                  {[
+                    { l: 'Produto favorito', v: `${clientStats.favProduct[0]} (${clientStats.favProduct[1]}×)`, accent: true },
+                    { l: 'Total consumido', v: fmt(clientStats.total) },
+                    { l: 'Visitas (mesas distintas)', v: String(clientStats.visits) },
+                    ...(clientStats.favHour ? [{ l: 'Horário preferido', v: `${clientStats.favHour[0]}h` }] : []),
+                  ].map(s => (
+                    <div key={s.l} className="min-w-0 rounded-xl border border-line bg-bg p-3.5">
+                      <dt className="text-xs text-mute">{s.l}</dt>
+                      <dd className={cn('mt-1.5 break-words font-semibold tnum', s.accent ? 'text-red-bright' : 'text-ink')}>{s.v}</dd>
                     </div>
-                  )}
-                </div>
+                  ))}
+                </dl>
               ) : (
-                <div className="text-muted text-sm">Esse cliente ainda não tem itens atribuídos a ele.</div>
+                <p className="mt-5 text-sm text-mute">Esse cliente ainda não tem itens atribuídos a ele.</p>
               )
             )}
-          </div>
 
-          <p className="text-muted text-xs mt-4">
-            Nota: os dados por cliente só existem quando o item é atribuído a alguém na hora de lançar
-            (seletor "pra quem é" na mesa) — itens marcados como "Compartilhado" não entram nessa contagem.
-          </p>
-        </>
+            <p className="mt-5 max-w-2xl text-xs leading-relaxed text-mute">
+              Os dados por cliente só existem quando o item é atribuído a alguém na hora de lançar (campo &ldquo;Para quem é&rdquo; na mesa).
+              Itens marcados como &ldquo;Compartilhado&rdquo; não entram nessa conta.
+            </p>
+          </Card>
+        </div>
       )}
-    </div>
+    </PageShell>
   )
 }

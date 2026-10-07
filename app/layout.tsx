@@ -2,6 +2,7 @@ import type { Metadata } from 'next'
 import './globals.css'
 import { AuthProvider } from './providers'
 import AppShell from '@/components/AppShell'
+import { UIProvider } from '@/components/ui'
 import { basePath } from '@/lib/basePath'
 
 export const metadata: Metadata = {
@@ -23,15 +24,29 @@ export const metadata: Metadata = {
 }
 
 export const viewport = {
-  themeColor: '#c81d25',
+  themeColor: '#0d0a0a',
+  width: 'device-width',
+  initialScale: 1,
+  viewportFit: 'cover' as const,
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="pt-BR">
+      <head>
+        {/* Fontes aqui (e não via @import no CSS, que o navegador ignora fora do topo do arquivo) */}
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
+        <link
+          rel="stylesheet"
+          href="https://fonts.googleapis.com/css2?family=Anton&family=Inter:wght@400;500;600;700&display=swap"
+        />
+      </head>
       <body>
         <AppShell>
-          <AuthProvider>{children}</AuthProvider>
+          <AuthProvider>
+            <UIProvider>{children}</UIProvider>
+          </AuthProvider>
         </AppShell>
       </body>
     </html>

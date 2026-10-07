@@ -4,6 +4,40 @@ import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/app/providers'
 import { adjustStockForProduct } from '@/lib/stock'
+import {
+  Banknote,
+  BellRing,
+  CalendarClock,
+  CalendarX2,
+  CircleCheck,
+  CreditCard,
+  ListChecks,
+  Plus,
+  QrCode,
+  Receipt,
+  Search,
+  Trash2,
+  UserPlus,
+  Wallet,
+  X,
+} from 'lucide-react'
+import {
+  Avatar,
+  Badge,
+  Button,
+  Card,
+  EmptyState,
+  Field,
+  IconButton,
+  Input,
+  LoadingBlock,
+  Modal,
+  Select,
+  Stepper,
+  cn,
+  fmtMoney as fmt,
+  useUI,
+} from '@/components/ui'
 
 type Product = { id: string; name: string; price: number; category: string }
 type Item = {
@@ -20,8 +54,6 @@ type TableRow = { id: string; number: number; status: TableStatus }
 type Customer = { id: string; full_name: string | null; email: string | null }
 type Payment = { id: string; amount: number; payer_customer_id: string | null; method: string | null; created_at: string }
 
-const fmt = (n: number) => 'R$ ' + n.toFixed(2).replace('.', ',')
-
 type PayMode = 'total' | 'itens' | 'valor' | null
 
 export default function OrderPanel({
@@ -37,6 +69,7 @@ export default function OrderPanel({
 }) {
   const { isStaff, isAdmin, user } = useAuth()
   const supabase = createClient()
+  const { toast, confirm } = useUI()
   const [orderId, setOrderId] = useState<string | null>(null)
   const [billRequested, setBillRequested] = useState(false)
   const [tableStatus, setTableStatus] = useState<TableStatus>(table.status)
@@ -44,6 +77,7 @@ export default function OrderPanel({
   const [payments, setPayments] = useState<Payment[]>([])
   const [checkins, setCheckins] = useState<Customer[]>([])
   const [selectedProduct, setSelectedProduct] = useState(products[0]?.id || '')
+  const [categoryFilter, setCategoryFilter] = useState('')
   const [qty, setQty] = useState(1)
   const [itemFor, setItemFor] = useState('')
   const [loading, setLoading] = useState(true)
@@ -58,6 +92,13 @@ export default function OrderPanel({
   const [payMethod, setPayMethod] = useState('dinheiro')
   const [itemSelections, setItemSelections] = useState<Record<string, number>>({})
   const [submittingPayment, setSubmittingPayment] = useState(false)
+
+  const categories = Array.from(new Set(products.map(p => p.category).filter(Boolean)))
+  const visibleProducts = categoryFilter ? products.filter(p => p.category === categoryFilter) : products
+  // Se o produto escolhido saiu da lista filtrada, usa o primeiro da lista visível
+  const effectiveProduct = visibleProducts.some(p => p.id === selectedProduct)
+    ? selectedProduct
+    : visibleProducts[0]?.id || ''
 
   const itemsTotal = items.reduce((sum, it) => sum + it.unit_price * it.qty, 0)
   const paymentsTotal = payments.reduce((sum, p) => sum + p.amount, 0)
@@ -149,7 +190,11 @@ export default function OrderPanel({
     const { data: elsewhere } = await supabase.rpc('customer_active_tables', { p_customer_id: customer.id })
     const other = (elsewhere || []).find((t: any) => t.table_id !== table.id)
     if (other) {
-      const ok = confirm(`${customer.full_name || customer.email} já está na Mesa ${other.table_number}. Adicionar aqui também (sem tirar de lá)?`)
+      const ok = await confirm({
+        title: 'Cliente já está em outra mesa',
+        message: `${customer.full_name || customer.email} já está na Mesa ${other.table_number}. Adicionar aqui também, sem tirar de lá?`,
+        confirmLabel: 'Adicionar aqui também',
+      })
       if (!ok) return
     }
     await supabase.from('table_checkins').insert({ table_id: table.id, customer_id: customer.id, checked_in_by: user?.id })
@@ -164,8 +209,8 @@ export default function OrderPanel({
   }
 
   const addItem = async () => {
-    const product = products.find(p => p.id === selectedProduct)
-    if (!product) return
+    const product = products.find(p => p.id === effectiveProduct)
+    if (!product) { toast.error('Escolha um produto para lançar.'); return }
     const oid = await ensureOrder()
     if (!oid) return
 
@@ -194,10 +239,16 @@ export default function OrderPanel({
 
   const removeItem = async (item: Item) => {
     if (item.paid_qty > 0) {
-      alert('Esse item já tem pagamento registrado em cima dele — não dá pra remover.')
+      toast.error('Esse item já tem pagamento registrado — não dá para remover.')
       return
     }
-    if (!confirm(`Remover "${item.product_name}" do pedido? Use isso só quando o item foi lançado errado.`)) return
+    const okRemove = await confirm({
+      title: `Dar baixa em "${item.product_name}"?`,
+      message: 'Use isso só quando o item foi lançado por engano. Ele sai do pedido e volta para o estoque.',
+      confirmLabel: 'Dar baixa',
+      tone: 'danger',
+    })
+    if (!okRemove) return
     await supabase.from('order_items').delete().eq('id', item.id)
     await adjustStockForProduct(item.product_id, -item.qty)
     const remaining = items.filter(it => it.id !== item.id)
@@ -249,7 +300,7 @@ export default function OrderPanel({
     }
 
     if (isNaN(amount) || amount <= 0) {
-      alert('Informe um valor válido maior que zero.')
+      toast.error('Informe um valor válido, maior que zero.')
       setSubmittingPayment(false)
       return
     }
@@ -277,33 +328,45 @@ export default function OrderPanel({
 
     setPayMode(null)
     setSubmittingPayment(false)
+    toast.success(`Pagamento de ${fmt(amount)} registrado.`)
     await loadOrder()
   }
 
   const closeOrder = async () => {
     if (!orderId || items.length === 0) return
-    const msg = totalPendente > 0
-      ? `Ainda falta ${fmt(totalPendente)} pra quitar nessa mesa. Mesmo assim fechar o pedido (total: ${fmt(total)})?`
-      : `Fechar o pedido da Mesa ${table.number} no valor de ${fmt(total)}?`
-    if (!confirm(msg)) return
+    const okClose = await confirm({
+      title: `Fechar a Mesa ${table.number}?`,
+      message: totalPendente > 0
+        ? `Ainda faltam ${fmt(totalPendente)} para quitar. Se fechar agora, o pedido vai constar com total de ${fmt(total)}.`
+        : `O pedido de ${fmt(total)} está quitado. A mesa volta a ficar livre.`,
+      confirmLabel: 'Fechar pedido',
+    })
+    if (!okClose) return
 
     await supabase.from('orders').update({ status: 'fechado', closed_at: new Date().toISOString(), total }).eq('id', orderId)
     await supabase.from('bar_tables').update({ status: 'livre' }).eq('id', table.id)
     await supabase.from('table_checkins').delete().eq('table_id', table.id)
 
+    toast.success(`Mesa ${table.number} fechada.`)
     onChanged()
     onClose()
   }
 
   const deleteTable = async () => {
-    const warn = items.length > 0
-      ? `A Mesa ${table.number} tem um pedido em aberto. Excluir mesmo assim? Isso apaga a mesa e todo o histórico dela.`
-      : `Excluir a Mesa ${table.number}? Isso apaga o histórico de pedidos dessa mesa também.`
-    if (!confirm(warn)) return
+    const okDelete = await confirm({
+      title: `Excluir a Mesa ${table.number}?`,
+      message: items.length > 0
+        ? 'Essa mesa tem um pedido em aberto. Excluir apaga a mesa e todo o histórico dela. Não dá para desfazer.'
+        : 'Excluir apaga a mesa e o histórico de pedidos dela. Não dá para desfazer.',
+      confirmLabel: 'Excluir mesa',
+      tone: 'danger',
+    })
+    if (!okDelete) return
 
     const { error, count } = await supabase.from('bar_tables').delete({ count: 'exact' }).eq('id', table.id)
-    if (error) { alert('Erro ao excluir mesa: ' + error.message); return }
-    if (!count) { alert('Não foi possível excluir — confira se a permissão "admin_delete_tables" foi criada no Supabase.'); return }
+    if (error) { toast.error('Erro ao excluir a mesa: ' + error.message); return }
+    if (!count) { toast.error('Não foi possível excluir. Confira se a permissão "admin_delete_tables" foi criada no Supabase.'); return }
+    toast.success(`Mesa ${table.number} excluída.`)
     onChanged()
     onClose()
   }
@@ -313,241 +376,406 @@ export default function OrderPanel({
     (c.full_name || c.email || '').toLowerCase().includes(customerSearch.toLowerCase())
   )
 
-  return (
-    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-5" onClick={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="panel-enter card w-full max-w-xl max-h-[88vh] overflow-y-auto shadow-2xl">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-line sticky top-0 bg-bgElevated z-10">
-          <div className="flex items-center gap-2.5">
-            <h2 className="text-2xl m-0">Mesa {table.number}</h2>
-            {tableStatus === 'reservada' && (
-              <span className="text-[10px] uppercase tracking-wide bg-amber-500/20 border border-amber-500 text-amber-400 px-2 py-0.5 rounded-full">Reservada</span>
-            )}
-            {billRequested && tableStatus === 'ocupada' && (
-              <span className="text-[10px] uppercase tracking-wide bg-blue-500/20 border border-blue-400 text-blue-300 px-2 py-0.5 rounded-full">Conta pedida</span>
-            )}
-          </div>
-          <button onClick={onClose} className="btn btn-ghost text-2xl">✕</button>
+  const statusBadge =
+    tableStatus === 'reservada' ? (
+      <Badge tone="amber" icon={CalendarClock}>Reservada</Badge>
+    ) : billRequested && tableStatus === 'ocupada' ? (
+      <Badge tone="blue" icon={BellRing}>Conta pedida</Badge>
+    ) : tableStatus === 'ocupada' ? (
+      <Badge tone="red">Ocupada</Badge>
+    ) : (
+      <Badge tone="green">Livre</Badge>
+    )
+
+  const payTitle = payMode === 'total' ? 'Pagar o total' : payMode === 'itens' ? 'Pagar por itens' : 'Pagar um valor livre'
+
+  const footer = (
+    <div>
+      {quitado && (
+        <div className="pulse-success mb-3 flex items-center justify-center gap-2 rounded-xl border border-ok/30 bg-ok/10 px-3 py-2 text-sm font-medium text-ok">
+          <CircleCheck className="h-4 w-4" aria-hidden />
+          Saldo quitado. Pode fechar a mesa.
         </div>
-
-        <div className="px-6 py-4">
-          {isStaff && tableStatus === 'livre' && (
-            <button onClick={markReserved} className="btn btn-outline btn-sm mb-4">📅 Marcar como reservada</button>
+      )}
+      <div className="mb-3 flex items-end justify-between gap-4">
+        <div className="min-w-0">
+          <p className="text-xs text-ink2">Falta pagar</p>
+          <p className={cn('text-3xl font-semibold leading-tight tnum', quitado ? 'text-ok' : 'text-ink')}>
+            {fmt(totalPendente)}
+          </p>
+        </div>
+        <p className="shrink-0 text-right text-xs leading-5 text-mute tnum">
+          Total {fmt(total)}
+          {totalPago > 0 && (
+            <>
+              <br />
+              <span className="text-ok">Pago {fmt(totalPago)}</span>
+            </>
           )}
-          {isStaff && tableStatus === 'reservada' && (
-            <button onClick={cancelReservation} className="btn btn-outline btn-sm mb-4">Cancelar reserva</button>
-          )}
+        </p>
+      </div>
+      {isStaff && tableStatus === 'ocupada' && (
+        <Button
+          variant={quitado ? 'success' : 'primary'}
+          size="lg"
+          full
+          icon={Receipt}
+          disabled={items.length === 0}
+          onClick={closeOrder}
+        >
+          Fechar pedido
+        </Button>
+      )}
+    </div>
+  )
 
-          {isStaff && (
-            <div className="mb-5">
-              <div className="text-[11px] tracking-wide uppercase text-muted mb-2">Clientes na mesa</div>
-              <div className="flex flex-wrap gap-1.5 mb-1.5">
-                {checkins.map(c => (
-                  <span key={c.id} className="chip">
-                    👤 {c.full_name || c.email}
-                    <button onClick={() => removeCheckin(c.id)} className="btn-ghost bg-transparent border-none cursor-pointer text-muted hover:text-red-bright p-0">✕</button>
-                  </span>
-                ))}
-                <button onClick={() => setShowCustomerPicker(v => !v)} className="btn btn-outline btn-sm btn-pill">
-                  + adicionar cliente
-                </button>
-              </div>
-              {showCustomerPicker && (
-                <div className="mt-2 card p-2.5">
-                  <input
-                    value={customerSearch} onChange={(e) => setCustomerSearch(e.target.value)}
-                    placeholder="Buscar cliente por nome..." className="field-input w-full mb-2"
-                  />
-                  <div className="max-h-40 overflow-y-auto">
-                    {filteredCustomers.length === 0 && <div className="text-xs text-muted py-2">Nenhum cliente encontrado.</div>}
-                    {filteredCustomers.map(c => (
-                      <button key={c.id} onClick={() => addCheckin(c)}
-                        className="block w-full text-left text-sm py-1.5 px-1 hover:text-red-bright bg-transparent border-none cursor-pointer transition-colors">
-                        {c.full_name || c.email}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
+  return (
+    <Modal onClose={onClose} title={`Mesa ${table.number}`} titleAdornment={statusBadge} footer={footer}>
+      <div className="space-y-6">
+        {/* Reserva */}
+        {isStaff && tableStatus === 'livre' && (
+          <Button variant="secondary" size="sm" icon={CalendarClock} onClick={markReserved}>
+            Marcar como reservada
+          </Button>
+        )}
+        {isStaff && tableStatus === 'reservada' && (
+          <Button variant="secondary" size="sm" icon={CalendarX2} onClick={cancelReservation}>
+            Cancelar reserva
+          </Button>
+        )}
+
+        {/* Clientes na mesa */}
+        {isStaff && (
+          <section aria-label="Clientes na mesa">
+            <h3 className="mb-2.5 text-sm font-semibold text-ink2">Clientes na mesa</h3>
+            <div className="no-scrollbar -mx-5 flex items-center gap-2 overflow-x-auto px-5 sm:mx-0 sm:flex-wrap sm:overflow-visible sm:px-0">
+              <Button variant="secondary" size="sm" icon={UserPlus} onClick={() => setShowCustomerPicker(v => !v)} className="shrink-0">
+                Adicionar cliente
+              </Button>
+              {checkins.map(c => (
+                <span
+                  key={c.id}
+                  className="inline-flex h-8 shrink-0 items-center gap-2 rounded-full border border-line bg-raised pl-1 pr-1 text-sm text-ink"
+                >
+                  <Avatar name={c.full_name || c.email} size="sm" />
+                  <span className="max-w-[160px] truncate">{c.full_name || c.email}</span>
+                  <button
+                    type="button"
+                    onClick={() => removeCheckin(c.id)}
+                    aria-label={`Remover ${c.full_name || c.email} da mesa`}
+                    className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-mute transition-colors hover:bg-hover hover:text-red-bright"
+                  >
+                    <X className="h-3.5 w-3.5" aria-hidden />
+                  </button>
+                </span>
+              ))}
             </div>
-          )}
 
-          {isStaff && (
-            <div className="flex gap-2 mb-5 flex-wrap">
-              <select value={selectedProduct} onChange={(e) => setSelectedProduct(e.target.value)}
-                className="field-input flex-1 min-w-[160px]">
-                {products.map(p => <option key={p.id} value={p.id}>{p.name} — {fmt(p.price)}</option>)}
-              </select>
-              <input type="number" min={1} value={qty}
-                onChange={(e) => setQty(Math.max(1, parseInt(e.target.value) || 1))}
-                className="field-input w-16 text-center" />
-              {checkins.length > 0 && (
-                <select value={itemFor} onChange={(e) => setItemFor(e.target.value)} className="field-input text-sm">
-                  <option value="">Compartilhado</option>
-                  {checkins.map(c => <option key={c.id} value={c.id}>{c.full_name || c.email}</option>)}
-                </select>
-              )}
-              <button onClick={addItem} className="btn btn-solid">Adicionar</button>
-            </div>
-          )}
-
-          {loading ? (
-            <div className="text-center text-muted py-8 text-sm">Carregando...</div>
-          ) : items.length === 0 ? (
-            <div className="text-center text-muted py-8 text-sm">Nenhum item lançado ainda.</div>
-          ) : (
-            items.map((item, i) => (
-              <div key={item.id} className="fade-in-up flex items-center justify-between py-2.5 border-b border-line" style={{ animationDelay: `${i * 30}ms` }}>
-                <div>
-                  <div className="font-medium">{item.product_name}</div>
-                  <div className="text-muted text-xs">
-                    {fmt(item.unit_price)} un.
-                    {item.paid_qty > 0 && <span className="text-green-400"> · {item.paid_qty} pago{item.paid_qty > 1 ? 's' : ''}</span>}
-                    {item.customer_id && <span> · 👤 {nameOf(item.customer_id)}</span>}
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  {isStaff && <button onClick={() => changeQty(item, -1)} className="w-6.5 h-6.5 rounded bg-bgElevated border border-line hover:border-red transition-colors">−</button>}
-                  <span className="min-w-[16px] text-center">{item.qty}</span>
-                  {isStaff && <button onClick={() => changeQty(item, 1)} className="w-6.5 h-6.5 rounded bg-bgElevated border border-line hover:border-red transition-colors">+</button>}
-                  <span className="font-display min-w-[70px] text-right">{fmt(item.unit_price * item.qty)}</span>
-                  {isAdmin && (
-                    <button onClick={() => removeItem(item)} className="btn btn-danger-outline btn-sm">
-                      Dar baixa
-                    </button>
+            {showCustomerPicker && (
+              <Card className="mt-3 animate-fade-in p-3">
+                <Input
+                  icon={Search}
+                  value={customerSearch}
+                  onChange={e => setCustomerSearch(e.target.value)}
+                  placeholder="Buscar cliente pelo nome"
+                  autoFocus
+                />
+                <div className="mt-2 max-h-44 overflow-y-auto">
+                  {filteredCustomers.length === 0 && (
+                    <p className="px-1 py-3 text-sm text-mute">Nenhum cliente encontrado.</p>
                   )}
+                  {filteredCustomers.map(c => (
+                    <button
+                      key={c.id}
+                      type="button"
+                      onClick={() => addCheckin(c)}
+                      className="flex h-11 w-full items-center gap-3 rounded-lg px-2 text-left text-sm text-ink transition-colors hover:bg-raised"
+                    >
+                      <Avatar name={c.full_name || c.email} size="sm" />
+                      <span className="min-w-0 truncate">{c.full_name || c.email}</span>
+                    </button>
+                  ))}
                 </div>
-              </div>
-            ))
-          )}
+              </Card>
+            )}
+          </section>
+        )}
 
-          {isStaff && orderId && (
-            <div className="mt-5">
-              <button onClick={toggleBillRequested} className={`btn btn-sm mb-4 ${billRequested ? 'btn-solid' : 'btn-outline'}`} style={billRequested ? { background: '#5a96e6' } : {}}>
-                {billRequested ? '🔵 Conta solicitada (clique pra desmarcar)' : '🔔 Pedir conta'}
-              </button>
-
-              <div className="flex items-center justify-between mb-2">
-                <div className="text-[11px] tracking-wide uppercase text-muted">Pagamentos registrados</div>
-              </div>
-              {payments.length > 0 && (
-                <div className="mb-3">
-                  {payments.map(p => (
-                    <div key={p.id} className="flex items-center justify-between text-sm py-1.5 border-b border-line">
-                      <span className="text-paperDim">
-                        {p.method || 'pagamento'} {nameOf(p.payer_customer_id) ? `· ${nameOf(p.payer_customer_id)}` : ''}
-                      </span>
-                      <span className="font-display text-green-400">{fmt(p.amount)}</span>
-                    </div>
+        {/* Lançar item */}
+        {isStaff && (
+          <section aria-label="Lançar item">
+            <h3 className="mb-2.5 text-sm font-semibold text-ink2">Lançar item</h3>
+            <Card className="space-y-3 bg-bg p-3">
+              {categories.length > 1 && (
+                <div className="no-scrollbar -mx-1 flex gap-1.5 overflow-x-auto px-1 pb-0.5">
+                  {['', ...categories].map(cat => (
+                    <button
+                      key={cat || 'todas'}
+                      type="button"
+                      onClick={() => setCategoryFilter(cat)}
+                      aria-pressed={categoryFilter === cat}
+                      className={cn(
+                        'h-8 shrink-0 rounded-full border px-3 text-[13px] font-medium transition-colors',
+                        categoryFilter === cat
+                          ? 'border-red/50 bg-red/15 text-ink'
+                          : 'border-line bg-surface text-ink2 hover:border-lineStrong hover:text-ink',
+                      )}
+                    >
+                      {cat || 'Todos'}
+                    </button>
                   ))}
                 </div>
               )}
 
+              {/* Celular: seletor em linha própria (para o preço não ser cortado). Telas maiores: 2 linhas compactas. */}
+              <div className="grid grid-cols-[auto_1fr] items-center gap-3 sm:grid-cols-[1fr_auto]">
+                <div className="col-span-2 min-w-0 sm:col-span-1">
+                  <Select
+                    aria-label="Produto"
+                    value={effectiveProduct}
+                    onChange={e => setSelectedProduct(e.target.value)}
+                  >
+                    {visibleProducts.map(p => (
+                      <option key={p.id} value={p.id}>{p.name} — {fmt(p.price)}</option>
+                    ))}
+                  </Select>
+                </div>
+                <Stepper label="quantidade" value={qty} onChange={setQty} />
+                {checkins.length > 0 && (
+                  <div className="min-w-0">
+                    <Select aria-label="Para quem é o item" value={itemFor} onChange={e => setItemFor(e.target.value)}>
+                      <option value="">Compartilhado</option>
+                      {checkins.map(c => <option key={c.id} value={c.id}>{c.full_name || c.email}</option>)}
+                    </Select>
+                  </div>
+                )}
+                <Button
+                  variant="primary"
+                  size="lg"
+                  icon={Plus}
+                  onClick={addItem}
+                  disabled={!effectiveProduct}
+                  className={checkins.length > 0 ? 'col-span-2 !h-11 sm:col-span-1' : 'col-span-2 !h-11'}
+                >
+                  Adicionar
+                </Button>
+              </div>
+            </Card>
+          </section>
+        )}
+
+        {/* Itens */}
+        <section aria-label="Itens do pedido">
+          <h3 className="mb-2.5 text-sm font-semibold text-ink2">
+            Itens do pedido{items.length > 0 && <span className="ml-1.5 font-normal text-mute">({items.length})</span>}
+          </h3>
+          {loading ? (
+            <LoadingBlock className="py-8" />
+          ) : items.length === 0 ? (
+            <EmptyState
+              icon={ListChecks}
+              title="Nenhum item lançado"
+              description={isStaff ? 'Escolha um produto acima para abrir o pedido desta mesa.' : 'Quando o atendente lançar algo, aparece aqui.'}
+              className="py-8"
+            />
+          ) : (
+            <ul className="divide-y divide-line overflow-hidden rounded-2xl border border-line">
+              {items.map(item => (
+                <li key={item.id} className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 bg-surface px-3.5 py-3">
+                  <div className="min-w-0 flex-1 basis-40">
+                    <p className="truncate text-[15px] font-medium text-ink">{item.product_name}</p>
+                    <p className="mt-0.5 text-xs text-mute">
+                      {fmt(item.unit_price)} cada
+                      {item.paid_qty > 0 && <span className="text-ok"> · {item.paid_qty} pago{item.paid_qty > 1 ? 's' : ''}</span>}
+                      {item.customer_id && <span> · {nameOf(item.customer_id)}</span>}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2.5">
+                    {isStaff ? (
+                      <Stepper
+                        size="sm"
+                        label={`quantidade de ${item.product_name}`}
+                        value={item.qty}
+                        min={Math.max(1, item.paid_qty)}
+                        onChange={v => changeQty(item, v - item.qty)}
+                      />
+                    ) : (
+                      <span className="text-sm text-ink2 tnum">{item.qty}×</span>
+                    )}
+                    <span className="min-w-[76px] text-right text-sm font-semibold text-ink tnum">
+                      {fmt(item.unit_price * item.qty)}
+                    </span>
+                    {isAdmin && (
+                      <IconButton
+                        icon={Trash2}
+                        label={`Dar baixa em ${item.product_name}`}
+                        size="sm"
+                        onClick={() => removeItem(item)}
+                        className="hover:text-red-bright"
+                      />
+                    )}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+
+        {/* Conta e pagamentos */}
+        {isStaff && orderId && (
+          <section aria-label="Conta e pagamentos" className="space-y-4">
+            <Button
+              variant={billRequested ? 'primary' : 'secondary'}
+              size="sm"
+              icon={BellRing}
+              onClick={toggleBillRequested}
+              className={billRequested ? '!bg-info !text-bg hover:!bg-info/90' : ''}
+            >
+              {billRequested ? 'Conta pedida (toque para desmarcar)' : 'Pedir a conta'}
+            </Button>
+
+            <div>
+              <h3 className="mb-2.5 text-sm font-semibold text-ink2">Pagamentos</h3>
+              {payments.length > 0 && (
+                <ul className="mb-3 divide-y divide-line overflow-hidden rounded-xl border border-line">
+                  {payments.map(p => (
+                    <li key={p.id} className="flex items-center justify-between gap-3 bg-surface px-3.5 py-2.5 text-sm">
+                      <span className="min-w-0 truncate text-ink2">
+                        <span className="capitalize">{p.method || 'Pagamento'}</span>
+                        {nameOf(p.payer_customer_id) ? ` · ${nameOf(p.payer_customer_id)}` : ''}
+                      </span>
+                      <span className="font-semibold text-ok tnum">{fmt(p.amount)}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+
               {!payMode ? (
-                <div className="flex gap-2 flex-wrap">
-                  <button onClick={() => openPayForm('total')} className="btn btn-outline btn-sm" disabled={totalPendente <= 0}>Pagar total</button>
-                  <button onClick={() => openPayForm('itens')} className="btn btn-outline btn-sm" disabled={items.every(it => it.qty <= it.paid_qty)}>Pagar por itens</button>
-                  <button onClick={() => openPayForm('valor')} className="btn btn-outline btn-sm">Pagar valor livre</button>
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                  <Button variant="secondary" icon={Wallet} onClick={() => openPayForm('total')} disabled={totalPendente <= 0}>
+                    Pagar total
+                  </Button>
+                  <Button variant="secondary" icon={ListChecks} onClick={() => openPayForm('itens')} disabled={items.every(it => it.qty <= it.paid_qty)}>
+                    Por itens
+                  </Button>
+                  <Button variant="secondary" icon={Banknote} onClick={() => openPayForm('valor')}>
+                    Valor livre
+                  </Button>
                 </div>
               ) : (
-                <div className="card p-3.5">
-                  <div className="flex items-center justify-between mb-3">
-                    <span className="font-display text-sm uppercase tracking-wide">
-                      {payMode === 'total' ? 'Pagamento total' : payMode === 'itens' ? 'Pagar por itens' : 'Valor livre'}
-                    </span>
-                    <button onClick={() => setPayMode(null)} className="btn btn-ghost btn-sm">Cancelar</button>
+                <Card className="animate-fade-in space-y-4 bg-bg p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <h4 className="text-[15px] font-semibold text-ink">{payTitle}</h4>
+                    <Button variant="ghost" size="sm" onClick={() => setPayMode(null)}>Cancelar</Button>
                   </div>
 
                   {payMode === 'total' && (
-                    <div className="text-center mb-3">
-                      <div className="text-muted text-xs uppercase tracking-wide">Valor a registrar</div>
-                      <div className="font-display text-3xl text-red-bright">{fmt(totalPendente)}</div>
+                    <div className="rounded-xl bg-surface py-4 text-center">
+                      <p className="text-xs text-mute">Valor a registrar</p>
+                      <p className="mt-1 text-3xl font-semibold text-ink tnum">{fmt(totalPendente)}</p>
                     </div>
                   )}
 
                   {payMode === 'itens' && (
-                    <div className="mb-3 space-y-2">
+                    <div className="space-y-2.5">
                       {items.filter(it => it.qty > it.paid_qty).map(it => {
                         const remaining = it.qty - it.paid_qty
                         return (
-                          <div key={it.id} className="flex items-center justify-between text-sm">
-                            <span>{it.product_name} <span className="text-muted text-xs">({remaining} pendente{remaining > 1 ? 's' : ''})</span></span>
-                            <input
-                              type="number" min={0} max={remaining}
+                          <div key={it.id} className="flex items-center justify-between gap-3 text-sm">
+                            <span className="min-w-0 truncate">
+                              {it.product_name}{' '}
+                              <span className="text-xs text-mute">({remaining} pendente{remaining > 1 ? 's' : ''})</span>
+                            </span>
+                            <Stepper
+                              size="sm"
+                              label={`itens pagos de ${it.product_name}`}
+                              min={0}
+                              max={remaining}
                               value={itemSelections[it.id] ?? 0}
-                              onChange={(e) => setItemSelections(prev => ({ ...prev, [it.id]: Math.min(remaining, Math.max(0, parseInt(e.target.value) || 0)) }))}
-                              className="field-input w-16 text-center"
+                              onChange={v => setItemSelections(prev => ({ ...prev, [it.id]: Math.min(remaining, Math.max(0, v)) }))}
                             />
                           </div>
                         )
                       })}
-                      <div className="flex justify-between text-sm pt-2 border-t border-line">
-                        <span className="text-muted">Total selecionado</span>
-                        <span className="font-display text-red-bright">{fmt(itemsSelectionTotal)}</span>
+                      <div className="flex items-center justify-between border-t border-line pt-3 text-sm">
+                        <span className="text-ink2">Total selecionado</span>
+                        <span className="text-lg font-semibold text-ink tnum">{fmt(itemsSelectionTotal)}</span>
                       </div>
                     </div>
                   )}
 
                   {payMode === 'valor' && (
-                    <input
-                      value={payAmount} onChange={(e) => setPayAmount(e.target.value)}
-                      type="text" inputMode="decimal" placeholder="Valor (ex: 50)"
-                      className="field-input w-full mb-3"
-                    />
+                    <Field label="Valor">
+                      <Input
+                        value={payAmount}
+                        onChange={e => setPayAmount(e.target.value)}
+                        type="text"
+                        inputMode="decimal"
+                        placeholder="Ex.: 50"
+                        autoFocus
+                      />
+                    </Field>
                   )}
 
-                  <div className="flex gap-2 flex-wrap mb-3">
-                    <select value={payMethod} onChange={(e) => setPayMethod(e.target.value)} className="field-input text-sm">
-                      <option value="dinheiro">Dinheiro</option>
-                      <option value="pix">Pix</option>
-                      <option value="cartao">Cartão</option>
-                    </select>
-                    <select value={payPayer} onChange={(e) => setPayPayer(e.target.value)} className="field-input text-sm flex-1 min-w-[160px]">
-                      <option value="">Pagador (opcional, pra pontuar)</option>
-                      {checkins.map(c => <option key={c.id} value={c.id}>{c.full_name || c.email}</option>)}
-                    </select>
+                  <div>
+                    <p className="mb-1.5 text-xs font-medium text-ink2">Forma de pagamento</p>
+                    <div className="grid grid-cols-3 gap-2">
+                      {([
+                        { v: 'dinheiro', label: 'Dinheiro', icon: Banknote },
+                        { v: 'pix', label: 'Pix', icon: QrCode },
+                        { v: 'cartao', label: 'Cartão', icon: CreditCard },
+                      ] as const).map(m => {
+                        const Icon = m.icon
+                        const active = payMethod === m.v
+                        return (
+                          <button
+                            key={m.v}
+                            type="button"
+                            aria-pressed={active}
+                            onClick={() => setPayMethod(m.v)}
+                            className={cn(
+                              'flex h-14 flex-col items-center justify-center gap-1 rounded-xl border text-xs font-medium transition-colors',
+                              active
+                                ? 'border-red/60 bg-red/15 text-ink'
+                                : 'border-line bg-surface text-ink2 hover:border-lineStrong hover:text-ink',
+                            )}
+                          >
+                            <Icon className={cn('h-4 w-4', active && 'text-red-bright')} aria-hidden />
+                            {m.label}
+                          </button>
+                        )
+                      })}
+                    </div>
                   </div>
 
-                  <button onClick={submitPayment} disabled={submittingPayment} className="btn btn-success w-full">
-                    {submittingPayment ? 'Registrando...' : 'Confirmar pagamento'}
-                  </button>
-                </div>
+                  <Field label="Quem pagou (opcional, para pontuar)">
+                    <Select value={payPayer} onChange={e => setPayPayer(e.target.value)}>
+                      <option value="">Sem pontuação</option>
+                      {checkins.map(c => <option key={c.id} value={c.id}>{c.full_name || c.email}</option>)}
+                    </Select>
+                  </Field>
+
+                  <Button variant="success" size="lg" full loading={submittingPayment} onClick={submitPayment}>
+                    {submittingPayment ? 'Registrando…' : 'Confirmar pagamento'}
+                  </Button>
+                </Card>
               )}
             </div>
-          )}
-        </div>
+          </section>
+        )}
 
-        <div className="px-6 py-4 border-t border-line sticky bottom-0 bg-bgElevated">
-          {quitado && (
-            <div className="pulse-success bg-green-600/15 border border-green-600 text-green-400 text-xs rounded-lg px-3 py-2 mb-3 text-center font-display tracking-wide uppercase">
-              ✅ Saldo quitado — pode fechar a mesa!
-            </div>
-          )}
-          <div className="flex justify-between items-center text-xs text-muted mb-1">
-            <span>Total do pedido</span>
-            <span>{fmt(total)}</span>
-          </div>
-          {totalPago > 0 && (
-            <div className="flex justify-between items-center text-xs text-green-400 mb-1">
-              <span>Já pago</span>
-              <span>{fmt(totalPago)}</span>
-            </div>
-          )}
-          <div className="flex justify-between items-center mb-3.5">
-            <span className="text-muted text-xs tracking-wide uppercase">Falta pagar</span>
-            <span className="font-display text-3xl text-red-bright">{fmt(totalPendente)}</span>
-          </div>
-          {isStaff && tableStatus === 'ocupada' && (
-            <button onClick={closeOrder} disabled={items.length === 0} className="btn w-full py-3" style={{ background: quitado ? '#4ade80' : '#22c55e', color: '#0c0909', fontFamily: 'Anton', letterSpacing: '1px', textTransform: 'uppercase' }}>
-              Fechar Pedido
+        {isAdmin && (
+          <div className="border-t border-line pt-4">
+            <button
+              type="button"
+              onClick={deleteTable}
+              className="flex items-center gap-1.5 rounded-lg px-1 py-1 text-xs text-mute transition-colors hover:text-red-bright"
+            >
+              <Trash2 className="h-3.5 w-3.5" aria-hidden /> Excluir mesa
             </button>
-          )}
-          {isAdmin && (
-            <button onClick={deleteTable} className="btn btn-danger-outline w-full mt-2.5">
-              Excluir mesa
-            </button>
-          )}
-        </div>
+          </div>
+        )}
       </div>
-    </div>
+    </Modal>
   )
 }

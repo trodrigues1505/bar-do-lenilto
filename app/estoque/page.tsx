@@ -2,9 +2,24 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
+import { Link2, Minus, Package, PackageOpen, Plus, Trash2, TriangleAlert, X } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/app/providers'
-import Topbar from '@/components/Topbar'
+import PageShell, { FullScreenLoading } from '@/components/PageShell'
+import {
+  Badge,
+  Button,
+  Card,
+  EmptyState,
+  Field,
+  IconButton,
+  Input,
+  LoadingBlock,
+  ProgressBar,
+  Select,
+  cn,
+  useUI,
+} from '@/components/ui'
 
 type StockItem = { id: string; name: string; unit: string; qty: number; min_qty: number }
 type Product = { id: string; name: string }
@@ -14,6 +29,7 @@ export default function EstoquePage() {
   const { user, isStaff, isAdmin, loading: authLoading } = useAuth()
   const router = useRouter()
   const supabase = createClient()
+  const { toast, confirm } = useUI()
 
   const [items, setItems] = useState<StockItem[]>([])
   const [products, setProducts] = useState<Product[]>([])
@@ -52,13 +68,15 @@ export default function EstoquePage() {
   useEffect(() => { if (isStaff) load() }, [isStaff])
 
   const addItem = async () => {
-    if (!name.trim()) return
-    await supabase.from('stock_items').insert({
+    if (!name.trim()) { toast.error('Dê um nome ao insumo.'); return }
+    const { error } = await supabase.from('stock_items').insert({
       name: name.trim(),
       unit: unit.trim() || 'un',
       qty: parseFloat(qty) || 0,
       min_qty: parseFloat(minQty) || 0,
     })
+    if (error) { toast.error('Não foi possível salvar: ' + error.message); return }
+    toast.success(`${name.trim()} adicionado ao estoque.`)
     setName(''); setUnit('un'); setQty(''); setMinQty('')
     await load()
   }
@@ -66,145 +84,209 @@ export default function EstoquePage() {
   const updateQty = async (item: StockItem, delta: number) => {
     const newQty = Math.max(0, item.qty + delta)
     setItems(prev => prev.map(i => i.id === item.id ? { ...i, qty: newQty } : i))
-    await supabase.from('stock_items').update({ qty: newQty }).eq('id', item.id)
+    const { error } = await supabase.from('stock_items').update({ qty: newQty }).eq('id', item.id)
+    if (error) {
+      toast.error('Não foi possível atualizar a quantidade: ' + error.message)
+      await load()
+    }
   }
 
-  const removeItem = async (id: string) => {
-    if (!confirm('Remover esse item do estoque? A receita ligada a produtos também é apagada.')) return
-    await supabase.from('stock_items').delete().eq('id', id)
+  const removeItem = async (item: StockItem) => {
+    const ok = await confirm({
+      title: `Remover "${item.name}" do estoque?`,
+      message: 'A receita ligada a produtos também é apagada.',
+      confirmLabel: 'Remover',
+      tone: 'danger',
+    })
+    if (!ok) return
+    const { error } = await supabase.from('stock_items').delete().eq('id', item.id)
+    if (error) { toast.error('Não foi possível remover: ' + error.message); return }
+    toast.success('Item removido.')
     await load()
   }
 
   const addUsage = async () => {
-    if (!recipeProduct || !recipeStockItem) return
+    if (!recipeProduct || !recipeStockItem) { toast.error('Escolha o produto e o insumo.'); return }
     const q = parseFloat(recipeQty)
-    if (isNaN(q) || q <= 0) return
-    await supabase.from('product_stock_usage').upsert(
+    if (isNaN(q) || q <= 0) { toast.error('Informe uma quantidade maior que zero.'); return }
+    const { error } = await supabase.from('product_stock_usage').upsert(
       { product_id: recipeProduct, stock_item_id: recipeStockItem, qty_per_unit: q },
       { onConflict: 'product_id,stock_item_id' }
     )
+    if (error) { toast.error('Não foi possível vincular: ' + error.message); return }
+    toast.success('Insumo vinculado ao produto.')
     setRecipeQty('1')
     await load()
   }
 
   const removeUsage = async (id: string) => {
-    await supabase.from('product_stock_usage').delete().eq('id', id)
+    const { error } = await supabase.from('product_stock_usage').delete().eq('id', id)
+    if (error) { toast.error('Não foi possível desvincular: ' + error.message); return }
     await load()
   }
 
-  if (authLoading) {
-    return <div className="min-h-screen flex items-center justify-center text-muted text-sm">Carregando...</div>
-  }
+  if (authLoading) return <FullScreenLoading />
   if (!user || !isStaff) return null
 
-  const productName = (id: string) => products.find(p => p.id === id)?.name || '—'
   const stockName = (id: string) => items.find(i => i.id === id)?.name || '—'
+  const stockUnit = (id: string) => items.find(i => i.id === id)?.unit || ''
   const recipeForProduct = usage.filter(u => u.product_id === recipeProduct)
+  const lowCount = items.filter(i => i.qty <= i.min_qty).length
+  const fmtQty = (n: number) => String(Math.round(n * 100) / 100).replace('.', ',')
 
   return (
-    <div className="max-w-6xl mx-auto px-5 pt-5 pb-20">
-      <Topbar />
-      <h2 className="text-xl mb-4">Estoque ({items.length})</h2>
-
+    <PageShell
+      title="Estoque"
+      subtitle={
+        loadingData
+          ? undefined
+          : lowCount > 0
+          ? `${lowCount} ${lowCount === 1 ? 'item precisa' : 'itens precisam'} de reposição`
+          : `${items.length} ${items.length === 1 ? 'item' : 'itens'}, nenhum abaixo do mínimo`
+      }
+    >
       {isAdmin && (
-        <div className="grid gap-2.5 mb-6" style={{ gridTemplateColumns: '2fr 1fr 1fr 1fr auto' }}>
-          <input value={name} onChange={e => setName(e.target.value)} placeholder="Nome do insumo (ex: Vodka)"
-            className="bg-bgElevated border border-line rounded-lg px-3 py-2.5" />
-          <input value={unit} onChange={e => setUnit(e.target.value)} placeholder="Unidade (ml, un, kg)"
-            className="bg-bgElevated border border-line rounded-lg px-3 py-2.5" />
-          <input value={qty} onChange={e => setQty(e.target.value)} type="number" step="0.01" placeholder="Qtd atual"
-            className="bg-bgElevated border border-line rounded-lg px-3 py-2.5" />
-          <input value={minQty} onChange={e => setMinQty(e.target.value)} type="number" step="0.01" placeholder="Mínimo"
-            className="bg-bgElevated border border-line rounded-lg px-3 py-2.5" />
-          <button onClick={addItem} className="bg-red hover:bg-red-bright rounded-lg px-4 font-display tracking-wide">
-            Adicionar
-          </button>
-        </div>
+        <Card className="mb-6 p-4 sm:p-5">
+          <h2 className="mb-4 text-sm font-semibold text-ink">Novo insumo</h2>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-[2fr_1fr_1fr_1fr_auto] lg:items-end">
+            <Field label="Nome" className="sm:col-span-2 lg:col-span-1">
+              <Input value={name} onChange={e => setName(e.target.value)} placeholder="Ex.: Vodka" />
+            </Field>
+            <Field label="Unidade">
+              <Input value={unit} onChange={e => setUnit(e.target.value)} placeholder="ml, un, kg" />
+            </Field>
+            <Field label="Quantidade atual">
+              <Input value={qty} onChange={e => setQty(e.target.value)} type="number" step="0.01" inputMode="decimal" placeholder="0" />
+            </Field>
+            <Field label="Mínimo">
+              <Input value={minQty} onChange={e => setMinQty(e.target.value)} type="number" step="0.01" inputMode="decimal" placeholder="0" />
+            </Field>
+            <Button variant="primary" size="lg" icon={Plus} onClick={addItem} className="sm:col-span-2 lg:col-span-1 lg:h-11">
+              Adicionar
+            </Button>
+          </div>
+        </Card>
       )}
 
       {loadingData ? (
-        <div className="text-center text-muted py-8 text-sm">Carregando...</div>
+        <LoadingBlock />
       ) : items.length === 0 ? (
-        <div className="text-center text-muted py-8 text-sm">Nenhum item de estoque cadastrado ainda.</div>
+        <Card>
+          <EmptyState
+            icon={PackageOpen}
+            title="Nenhum item no estoque"
+            description={isAdmin ? 'Cadastre os insumos acima. Depois, ligue cada um aos produtos para a baixa ser automática.' : 'Peça a um admin para cadastrar os insumos.'}
+          />
+        </Card>
       ) : (
-        <table className="w-full border-collapse mb-10">
-          <thead>
-            <tr>
-              <th className="text-left text-[11px] tracking-wide uppercase text-muted px-2.5 py-2 border-b border-line">Item</th>
-              <th className="text-left text-[11px] tracking-wide uppercase text-muted px-2.5 py-2 border-b border-line">Qtd</th>
-              <th className="text-left text-[11px] tracking-wide uppercase text-muted px-2.5 py-2 border-b border-line">Mínimo</th>
-              <th className="border-b border-line"></th>
-            </tr>
-          </thead>
-          <tbody>
-            {items.map(item => {
-              const low = item.qty <= item.min_qty
-              return (
-                <tr key={item.id}>
-                  <td className="px-2.5 py-2.5 border-b border-line">
-                    {item.name}
-                    {low && <span className="ml-2 bg-red text-paper text-[10px] px-2 py-0.5 rounded-full uppercase font-bold">Repor!</span>}
-                  </td>
-                  <td className="px-2.5 py-2.5 border-b border-line">
-                    <div className="flex items-center gap-2">
-                      <button onClick={() => updateQty(item, -1)} className="w-6.5 h-6.5 rounded bg-bgCard border border-line hover:border-red">−</button>
-                      <span className={low ? 'text-red-bright font-display' : ''}>{item.qty} {item.unit}</span>
-                      <button onClick={() => updateQty(item, 1)} className="w-6.5 h-6.5 rounded bg-bgCard border border-line hover:border-red">+</button>
-                    </div>
-                  </td>
-                  <td className="px-2.5 py-2.5 border-b border-line text-paperDim">{item.min_qty} {item.unit}</td>
-                  <td className="px-2.5 py-2.5 border-b border-line">
-                    {isAdmin && (
-                      <button onClick={() => removeItem(item.id)} className="text-muted hover:text-red-bright text-sm bg-transparent border-none cursor-pointer">
-                        Remover
-                      </button>
-                    )}
-                  </td>
-                </tr>
-              )
-            })}
-          </tbody>
-        </table>
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {items.map(item => {
+            const low = item.qty <= item.min_qty
+            const level = item.min_qty > 0 ? (item.qty / (item.min_qty * 2)) * 100 : 100
+            return (
+              <Card key={item.id} className={cn('flex flex-col p-4', low && 'border-red/40')}>
+                <div className="mb-3 flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <h3 className="truncate text-[15px] font-medium text-ink">{item.name}</h3>
+                    <p className="mt-0.5 text-xs text-mute">
+                      Mínimo: {fmtQty(item.min_qty)} {item.unit}
+                    </p>
+                  </div>
+                  {low && <Badge tone="red" icon={TriangleAlert}>Repor</Badge>}
+                  {isAdmin && (
+                    <IconButton
+                      icon={Trash2}
+                      label={`Remover ${item.name}`}
+                      size="sm"
+                      onClick={() => removeItem(item)}
+                      className="-mr-1 -mt-1 hover:text-red-bright"
+                    />
+                  )}
+                </div>
+
+                <div className="mb-3 flex items-center justify-between gap-3">
+                  <button
+                    type="button"
+                    aria-label={`Diminuir ${item.name}`}
+                    onClick={() => updateQty(item, -1)}
+                    disabled={item.qty <= 0}
+                    className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-line bg-raised text-ink2 transition-colors hover:border-lineStrong hover:text-ink active:scale-95 disabled:opacity-40"
+                  >
+                    <Minus className="h-4 w-4" aria-hidden />
+                  </button>
+                  <p className="min-w-0 truncate text-center">
+                    <span className={cn('text-2xl font-semibold tnum', low ? 'text-red-bright' : 'text-ink')}>
+                      {fmtQty(item.qty)}
+                    </span>
+                    <span className="ml-1.5 text-sm text-mute">{item.unit}</span>
+                  </p>
+                  <button
+                    type="button"
+                    aria-label={`Aumentar ${item.name}`}
+                    onClick={() => updateQty(item, 1)}
+                    className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-line bg-raised text-ink2 transition-colors hover:border-lineStrong hover:text-ink active:scale-95"
+                  >
+                    <Plus className="h-4 w-4" aria-hidden />
+                  </button>
+                </div>
+
+                {item.min_qty > 0 && <ProgressBar value={level} tone={low ? 'red' : 'green'} />}
+              </Card>
+            )
+          })}
+        </div>
       )}
 
       {isAdmin && products.length > 0 && (
-        <div>
-          <h3 className="text-lg mb-1">Receita dos produtos</h3>
-          <p className="text-muted text-sm mb-4">
-            Diz quanto de cada insumo um produto consome — assim a baixa no estoque acontece sozinha quando o item é vendido.
+        <section className="mt-10" aria-label="Receita dos produtos">
+          <h2 className="text-lg font-semibold text-ink">Receita dos produtos</h2>
+          <p className="mb-4 mt-1 max-w-xl text-sm text-ink2">
+            Defina quanto de cada insumo um produto consome. Assim, o estoque baixa sozinho quando o item é lançado na mesa.
           </p>
 
-          <div className="flex flex-wrap gap-2.5 mb-4">
-            <select value={recipeProduct} onChange={e => setRecipeProduct(e.target.value)}
-              className="bg-bgElevated border border-line rounded-lg px-3 py-2.5">
-              {products.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-            </select>
-            <select value={recipeStockItem} onChange={e => setRecipeStockItem(e.target.value)}
-              className="bg-bgElevated border border-line rounded-lg px-3 py-2.5">
-              <option value="">Escolha o insumo...</option>
-              {items.map(i => <option key={i.id} value={i.id}>{i.name}</option>)}
-            </select>
-            <input value={recipeQty} onChange={e => setRecipeQty(e.target.value)} type="number" step="0.01"
-              placeholder="Qtd por unidade vendida" className="w-40 bg-bgElevated border border-line rounded-lg px-3 py-2.5" />
-            <button onClick={addUsage} className="bg-red hover:bg-red-bright rounded-lg px-4 font-display tracking-wide">
-              Vincular
-            </button>
-          </div>
+          <Card className="p-4 sm:p-5">
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-[1fr_1fr_160px_auto] lg:items-end">
+              <Field label="Produto">
+                <Select value={recipeProduct} onChange={e => setRecipeProduct(e.target.value)}>
+                  {products.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                </Select>
+              </Field>
+              <Field label="Insumo">
+                <Select value={recipeStockItem} onChange={e => setRecipeStockItem(e.target.value)}>
+                  <option value="">Escolha o insumo…</option>
+                  {items.map(i => <option key={i.id} value={i.id}>{i.name}</option>)}
+                </Select>
+              </Field>
+              <Field label="Qtd. por unidade vendida">
+                <Input value={recipeQty} onChange={e => setRecipeQty(e.target.value)} type="number" step="0.01" inputMode="decimal" />
+              </Field>
+              <Button variant="primary" size="lg" icon={Link2} onClick={addUsage} className="sm:col-span-2 lg:col-span-1 lg:h-11">
+                Vincular
+              </Button>
+            </div>
 
-          {recipeForProduct.length > 0 && (
-            <ul className="text-sm space-y-1.5">
-              {recipeForProduct.map(u => (
-                <li key={u.id} className="flex items-center justify-between bg-bgCard border border-line rounded-lg px-3 py-2">
-                  <span>{stockName(u.stock_item_id)} — {u.qty_per_unit} por unidade</span>
-                  <button onClick={() => removeUsage(u.id)} className="text-muted hover:text-red-bright text-xs bg-transparent border-none cursor-pointer">
-                    remover
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
+            <div className="mt-5 border-t border-line pt-4">
+              {recipeForProduct.length === 0 ? (
+                <p className="flex items-center gap-2 text-sm text-mute">
+                  <Package className="h-4 w-4" aria-hidden /> Esse produto ainda não consome nenhum insumo.
+                </p>
+              ) : (
+                <ul className="space-y-2">
+                  {recipeForProduct.map(u => (
+                    <li key={u.id} className="flex items-center justify-between gap-3 rounded-xl border border-line bg-bg px-3.5 py-2.5 text-sm">
+                      <span className="min-w-0 truncate">
+                        <span className="text-ink">{stockName(u.stock_item_id)}</span>
+                        <span className="text-mute"> · {fmtQty(u.qty_per_unit)} {stockUnit(u.stock_item_id)} por unidade</span>
+                      </span>
+                      <IconButton icon={X} label="Desvincular insumo" size="sm" onClick={() => removeUsage(u.id)} />
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </Card>
+        </section>
       )}
-    </div>
+    </PageShell>
   )
 }
