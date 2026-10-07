@@ -4,26 +4,28 @@ import { useRef, useState } from 'react'
 import { withBasePath } from '@/lib/basePath'
 import { useCountUp } from '@/hooks/useCountUp'
 
+type TableStatus = 'livre' | 'ocupada' | 'reservada'
 type TableRow = {
   id: string
   number: number
-  status: 'livre' | 'ocupada'
+  status: TableStatus
   pos_x: number | null
   pos_y: number | null
 }
 
 const fmt = (n: number) => 'R$ ' + n.toFixed(2).replace('.', ',')
-const DRAG_THRESHOLD = 6 // px de movimento pra considerar "arrastou" em vez de "clicou"
 
 export default function FloorMap({
   tables,
   totals,
+  billRequested,
   canDrag,
   onOpenTable,
   onPositionChange,
 }: {
   tables: TableRow[]
   totals: Record<string, number>
+  billRequested: Record<string, boolean>
   canDrag: boolean
   onOpenTable: (table: TableRow) => void
   onPositionChange: (tableId: string, x: number, y: number) => void
@@ -86,6 +88,7 @@ export default function FloorMap({
         const pos = livePos[table.id] || { x: table.pos_x ?? 15, y: table.pos_y ?? 50 }
         const isDragging = draggingId === table.id
         const total = totals[table.id] || 0
+        const attention = table.status === 'ocupada' && billRequested[table.id]
         return (
           <TableMarker
             key={table.id}
@@ -95,6 +98,7 @@ export default function FloorMap({
             index={i}
             isDragging={isDragging}
             total={total}
+            attention={attention}
             canDrag={canDrag}
             onPointerDown={(e) => handlePointerDown(e, table)}
             onPointerMove={(e) => handlePointerMove(e, table)}
@@ -107,7 +111,7 @@ export default function FloorMap({
 }
 
 function TableMarker({
-  table, x, y, index, isDragging, total, canDrag,
+  table, x, y, index, isDragging, total, attention, canDrag,
   onPointerDown, onPointerMove, onPointerUp,
 }: {
   table: TableRow
@@ -116,13 +120,23 @@ function TableMarker({
   index: number
   isDragging: boolean
   total: number
+  attention: boolean
   canDrag: boolean
   onPointerDown: (e: React.PointerEvent) => void
   onPointerMove: (e: React.PointerEvent) => void
   onPointerUp: (e: React.PointerEvent) => void
 }) {
   const animatedTotal = useCountUp(total)
-  const icon = table.status === 'ocupada' ? '/tables/mesa-ocupada.png' : '/tables/mesa-livre.png'
+
+  const icon = attention
+    ? '/tables/mesa-atencao.png'
+    : table.status === 'reservada'
+    ? '/tables/mesa-reservada.png'
+    : table.status === 'ocupada'
+    ? '/tables/mesa-ocupada.png'
+    : '/tables/mesa-livre.png'
+
+  const pulseClass = attention ? 'table-pulse-blue' : table.status === 'ocupada' ? 'table-pulse' : ''
 
   return (
     <div
@@ -141,7 +155,7 @@ function TableMarker({
       }}
     >
       <div
-        className={`relative transition-transform duration-150 ${isDragging ? 'scale-110' : ''} ${table.status === 'ocupada' ? 'table-pulse' : ''}`}
+        className={`relative transition-transform duration-150 ${isDragging ? 'scale-110' : ''} ${pulseClass}`}
         style={{
           filter: isDragging ? 'drop-shadow(0 12px 20px rgba(0,0,0,.6))' : 'drop-shadow(0 4px 10px rgba(0,0,0,.4))',
         }}
@@ -152,8 +166,13 @@ function TableMarker({
         </div>
       </div>
       {table.status === 'ocupada' && (
-        <div className="mt-1 bg-bgElevated border border-red-dark rounded-full px-2.5 py-0.5 text-[11px] font-display text-red-bright shadow-lg whitespace-nowrap pointer-events-none">
+        <div className={`mt-1 bg-bgElevated border rounded-full px-2.5 py-0.5 text-[11px] font-display shadow-lg whitespace-nowrap pointer-events-none ${attention ? 'border-blue-400 text-blue-300' : 'border-red-dark text-red-bright'}`}>
           {fmt(animatedTotal)}
+        </div>
+      )}
+      {table.status === 'reservada' && (
+        <div className="mt-1 bg-bgElevated border border-amber-500 rounded-full px-2.5 py-0.5 text-[10px] font-display text-amber-400 shadow-lg whitespace-nowrap pointer-events-none uppercase tracking-wide">
+          Reservada
         </div>
       )}
     </div>
